@@ -466,7 +466,7 @@ const checkDuplicateFiles = async (files: File[]) => {
   checkingDuplicates.value = true
   try {
     const fileNames = files.map((f) => f.name)
-    const results = await $fetch('/api/photos/check-duplicate', {
+    const data = await $fetch('/api/photos/check-duplicate', {
       method: 'POST',
       body: { fileNames },
     })
@@ -475,8 +475,8 @@ const checkDuplicateFiles = async (files: File[]) => {
     duplicateCheckResults.value.clear()
 
     // 存储检查结果
-    if (Array.isArray(results)) {
-      results.forEach((result: any) => {
+    if (data.success && Array.isArray(data.results)) {
+      data.results.forEach((result: any) => {
         duplicateCheckResults.value.set(result.fileName, {
           fileName: result.fileName,
           exists: result.exists,
@@ -509,13 +509,26 @@ const clearSelectedFiles = () => {
 }
 
 // 监听文件选择变化，自动触发重复检查
-watch(selectedFiles, async (newFiles) => {
-  if (newFiles.length > 0) {
-    await checkDuplicateFiles(newFiles)
-  } else {
-    duplicateCheckResults.value.clear()
-  }
-})
+watch(
+  selectedFiles,
+  async (newFiles, oldFiles) => {
+    // 只有当文件数量变化或文件内容变化时才触发检查
+    if (newFiles.length > 0) {
+      // 检查是否真的有变化
+      const hasChanged =
+        !oldFiles ||
+        newFiles.length !== oldFiles.length ||
+        newFiles.some((file, index) => file !== oldFiles[index])
+
+      if (hasChanged) {
+        await checkDuplicateFiles(newFiles)
+      }
+    } else {
+      duplicateCheckResults.value.clear()
+    }
+  },
+  { deep: true },
+)
 
 watch(isUploadSlideoverOpen, (open) => {
   if (!open) {
@@ -2002,50 +2015,59 @@ onUnmounted(() => {
         >
           <template #body>
             <div class="space-y-4">
-              <UFileUpload
-                v-model="selectedFiles"
-                :label="$t('dashboard.photos.uploader.label')"
-                :description="
-                  $t('dashboard.photos.uploader.description', {
-                    maxSize: MAX_FILE_SIZE,
-                  })
-                "
-                icon="tabler:cloud-upload"
-                layout="list"
-                size="xl"
-                accept="image/jpeg,image/png,image/heic,image/heif,video/quicktime,.mov"
-                multiple
-                highlight
-                dropzone
-                :file-delete="{ variant: 'soft', color: 'neutral' }"
-                :ui="{
-                  root: 'w-full',
-                  base: 'group relative flex flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-neutral-200/80 bg-white/90 px-6 py-12 text-center shadow-sm transition-all duration-300 hover:border-primary-400/80 hover:bg-primary-500/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/60 dark:border-neutral-700/70 dark:bg-neutral-900/80',
-                  wrapper: 'flex flex-col items-center gap-2',
-                  label:
-                    'text-base font-semibold text-neutral-800 dark:text-neutral-100',
-                  description: 'text-sm text-neutral-500 dark:text-neutral-400',
-                  files: 'mt-2 flex w-full flex-col gap-2 overflow-y-auto max-h-[300px]',
-                  file: 'flex items-center justify-between gap-3 rounded-2xl border border-neutral-200/80 bg-white/80 px-4 py-3 text-left shadow-sm shadow-black/5 backdrop-blur-sm dark:border-neutral-800/80 dark:bg-neutral-900/70',
-                  fileLeadingAvatar: 'ring-1 ring-white/80 dark:ring-neutral-800',
-                  fileWrapper: 'min-w-0 flex-1',
-                  fileName:
-                    'text-sm font-medium text-neutral-700 dark:text-neutral-100 truncate',
-                  fileSize: 'text-xs text-neutral-500 dark:text-neutral-400',
-                  fileTrailingButton: 'text-neutral-400 hover:text-error-500',
-                }"
-              />
+              <!-- 文件拖拽上传区域 - 防止被压缩 -->
+              <div class="flex-shrink-0">
+                <UFileUpload
+                  v-model="selectedFiles"
+                  :label="$t('dashboard.photos.uploader.label')"
+                  :description="
+                    $t('dashboard.photos.uploader.description', {
+                      maxSize: MAX_FILE_SIZE,
+                    })
+                  "
+                  icon="tabler:cloud-upload"
+                  layout="grid"
+                  size="xl"
+                  accept="image/jpeg,image/png,image/heic,image/heif,video/quicktime,.mov"
+                  multiple
+                  highlight
+                  dropzone
+                  :ui="{
+                    root: 'w-full',
+                    base: 'group relative flex flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-neutral-200/80 bg-white/90 px-6 py-12 text-center shadow-sm transition-all duration-300 hover:border-primary-400/80 hover:bg-primary-500/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/60 dark:border-neutral-700/70 dark:bg-neutral-900/80',
+                    wrapper: 'flex flex-col items-center gap-2',
+                    label: 'text-base font-semibold text-neutral-800 dark:text-neutral-100',
+                    description: 'text-sm text-neutral-500 dark:text-neutral-400',
+                    files: 'hidden',
+                  }"
+                />
+              </div>
 
-              <!-- 文件状态显示区域 -->
+              <!-- 检查中的加载状态 -->
               <div
-                v-if="selectedFiles.length > 0 && duplicateCheckResults.size > 0"
+                v-if="checkingDuplicates"
+                class="flex items-center justify-center gap-2 py-4 text-sm text-neutral-500 dark:text-neutral-400"
+              >
+                <Icon
+                  name="tabler:loader-2"
+                  class="size-4 animate-spin"
+                />
+                <span>正在检查文件是否已存在...</span>
+              </div>
+
+              <!-- 统一的文件列表 -->
+              <div
+                v-if="selectedFiles.length > 0"
                 class="space-y-2"
               >
                 <div class="flex items-center justify-between px-2">
                   <span class="text-sm font-medium text-neutral-700 dark:text-neutral-300">
-                    文件状态
+                    已选择 {{ selectedFiles.length }} 个文件
                   </span>
-                  <div class="flex items-center gap-2">
+                  <div
+                    v-if="duplicateCheckResults.size > 0"
+                    class="flex items-center gap-2"
+                  >
                     <UBadge
                       v-if="newFilesCount > 0"
                       variant="soft"
@@ -2065,75 +2087,66 @@ onUnmounted(() => {
                   </div>
                 </div>
 
-                <div class="max-h-[200px] overflow-y-auto space-y-2">
+                <div class="space-y-2">
                   <div
-                    v-for="file in selectedFiles"
-                    :key="file.name"
-                    class="flex items-center justify-between gap-3 rounded-xl border px-3 py-2 text-sm transition-colors"
+                    v-for="(file, index) in selectedFiles"
+                    :key="`${file.name}-${index}`"
+                    class="flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-left shadow-sm transition-all"
                     :class="
                       duplicateCheckResults.get(file.name)?.exists
-                        ? 'border-neutral-200 bg-neutral-50/50 dark:border-neutral-800 dark:bg-neutral-900/30'
-                        : 'border-success-200 bg-success-50/30 dark:border-success-800/50 dark:bg-success-900/20'
+                        ? 'border-neutral-200/80 bg-neutral-50/50 dark:border-neutral-800/80 dark:bg-neutral-900/30 opacity-60'
+                        : 'border-neutral-200/80 bg-white/80 dark:border-neutral-800/80 dark:bg-neutral-900/70'
                     "
                   >
-                    <div class="flex items-center gap-2 min-w-0 flex-1">
+                    <div class="flex items-center gap-3 min-w-0 flex-1">
                       <Icon
-                        :name="
-                          duplicateCheckResults.get(file.name)?.exists
-                            ? 'tabler:file-check'
-                            : 'tabler:file-plus'
-                        "
-                        class="size-4 shrink-0"
+                        name="tabler:photo"
+                        class="size-5 shrink-0"
                         :class="
                           duplicateCheckResults.get(file.name)?.exists
                             ? 'text-neutral-400 dark:text-neutral-500'
-                            : 'text-success-600 dark:text-success-400'
+                            : 'text-primary-600 dark:text-primary-400'
                         "
                       />
-                      <span
-                        class="truncate"
-                        :class="
-                          duplicateCheckResults.get(file.name)?.exists
-                            ? 'text-neutral-500 dark:text-neutral-400'
-                            : 'text-neutral-700 dark:text-neutral-200'
-                        "
-                      >
-                        {{ file.name }}
-                      </span>
+                      <div class="min-w-0 flex-1">
+                        <div class="flex items-center gap-2">
+                          <span
+                            class="text-sm font-medium truncate"
+                            :class="
+                              duplicateCheckResults.get(file.name)?.exists
+                                ? 'text-neutral-500 dark:text-neutral-400'
+                                : 'text-neutral-700 dark:text-neutral-100'
+                            "
+                          >
+                            {{ file.name }}
+                          </span>
+                          <UBadge
+                            v-if="duplicateCheckResults.get(file.name)?.exists"
+                            variant="soft"
+                            color="neutral"
+                            size="xs"
+                          >
+                            已存在
+                          </UBadge>
+                        </div>
+                        <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                          {{ formatBytes(file.size) }}
+                        </span>
+                      </div>
                     </div>
-                    <UBadge
-                      :variant="
-                        duplicateCheckResults.get(file.name)?.exists
-                          ? 'soft'
-                          : 'soft'
-                      "
-                      :color="
-                        duplicateCheckResults.get(file.name)?.exists
-                          ? 'neutral'
-                          : 'success'
-                      "
+                    <UButton
+                      variant="ghost"
+                      color="neutral"
                       size="xs"
-                    >
-                      {{
-                        duplicateCheckResults.get(file.name)?.exists
-                          ? '已存在'
-                          : '新文件'
-                      }}
-                    </UBadge>
+                      icon="tabler:x"
+                      @click="
+                        () => {
+                          selectedFiles.splice(index, 1)
+                        }
+                      "
+                    />
                   </div>
                 </div>
-              </div>
-
-              <!-- 检查中的加载状态 -->
-              <div
-                v-if="checkingDuplicates"
-                class="flex items-center justify-center gap-2 py-4 text-sm text-neutral-500 dark:text-neutral-400"
-              >
-                <Icon
-                  name="tabler:loader-2"
-                  class="size-4 animate-spin"
-                />
-                <span>正在检查文件是否已存在...</span>
               </div>
             </div>
           </template>
