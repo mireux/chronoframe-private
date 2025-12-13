@@ -410,6 +410,16 @@ const toast = useToast()
 const selectedFiles = ref<File[]>([])
 const isUploadSlideoverOpen = ref(false)
 
+// 重复检查相关状态
+interface DuplicateCheckResult {
+  fileName: string
+  exists: boolean
+  photoId?: string
+}
+
+const checkingDuplicates = ref(false)
+const duplicateCheckResults = ref<Map<string, DuplicateCheckResult>>(new Map())
+
 const hasSelectedFiles = computed(() => selectedFiles.value.length > 0)
 
 const selectedFilesTotalSize = computed(() =>
@@ -433,9 +443,79 @@ const selectedFilesSummary = computed(() => {
   })
 })
 
+// 统计新文件和已存在文件的数量
+const newFilesCount = computed(() => {
+  if (duplicateCheckResults.value.size === 0) {
+    return selectedFiles.value.length
+  }
+  return selectedFiles.value.filter(
+    (file) => !duplicateCheckResults.value.get(file.name)?.exists,
+  ).length
+})
+
+const existingFilesCount = computed(() => {
+  return selectedFiles.value.filter(
+    (file) => duplicateCheckResults.value.get(file.name)?.exists,
+  ).length
+})
+
+// 批量检查文件是否已存在
+const checkDuplicateFiles = async (files: File[]) => {
+  if (files.length === 0) return
+
+  checkingDuplicates.value = true
+  try {
+    const fileNames = files.map((f) => f.name)
+    const results = await $fetch('/api/photos/check-duplicate', {
+      method: 'POST',
+      body: { fileNames },
+    })
+
+    // 清空之前的结果
+    duplicateCheckResults.value.clear()
+
+    // 存储检查结果
+    if (Array.isArray(results)) {
+      results.forEach((result: any) => {
+        duplicateCheckResults.value.set(result.fileName, {
+          fileName: result.fileName,
+          exists: result.exists,
+          photoId: result.photoId,
+        })
+      })
+    }
+
+    // 排序：新文件在前，已存在的在后
+    selectedFiles.value.sort((a, b) => {
+      const aExists = duplicateCheckResults.value.get(a.name)?.exists
+      const bExists = duplicateCheckResults.value.get(b.name)?.exists
+      return (aExists ? 1 : 0) - (bExists ? 1 : 0)
+    })
+  } catch (error) {
+    console.error('检查重复文件失败:', error)
+    toast.add({
+      title: '检查失败',
+      description: '无法检查文件是否已存在，将继续上传',
+      color: 'warning',
+    })
+  } finally {
+    checkingDuplicates.value = false
+  }
+}
+
 const clearSelectedFiles = () => {
   selectedFiles.value = []
+  duplicateCheckResults.value.clear()
 }
+
+// 监听文件选择变化，自动触发重复检查
+watch(selectedFiles, async (newFiles) => {
+  if (newFiles.length > 0) {
+    await checkDuplicateFiles(newFiles)
+  } else {
+    duplicateCheckResults.value.clear()
+  }
+})
 
 watch(isUploadSlideoverOpen, (open) => {
   if (!open) {
@@ -1031,8 +1111,16 @@ const handleUpload = async () => {
   // 先验证所有文件
   const validFiles: File[] = []
   const fileIdMapping = new Map<File, string>()
+  const skippedFiles: string[] = []
 
   for (const file of fileList) {
+    // 检查文件是否已存在
+    const duplicateResult = duplicateCheckResults.value.get(file.name)
+    if (duplicateResult?.exists) {
+      skippedFiles.push(file.name)
+      continue
+    }
+
     const validation = validateFile(file)
     if (!validation.valid) {
       errors.push(`${file.name}: ${validation.error}`)
@@ -1044,12 +1132,29 @@ const handleUpload = async () => {
     }
   }
 
-  if (validFiles.length === 0) {
+  // 显示跳过的文件提示
+  if (skippedFiles.length > 0) {
     toast.add({
-      title: $t('dashboard.photos.messages.error'),
-      description: $t('dashboard.photos.errors.allFilesValidationFailed'),
-      color: 'error',
+      title: '已跳过重复文件',
+      description: `跳过了 ${skippedFiles.length} 个已存在的文件`,
+      color: 'info',
     })
+  }
+
+  if (validFiles.length === 0) {
+    if (skippedFiles.length > 0) {
+      toast.add({
+        title: '没有需要上传的文件',
+        description: '所有文件都已存在或验证失败',
+        color: 'warning',
+      })
+    } else {
+      toast.add({
+        title: $t('dashboard.photos.messages.error'),
+        description: $t('dashboard.photos.errors.allFilesValidationFailed'),
+        color: 'error',
+      })
+    }
     selectedFiles.value = []
     return
   }
@@ -1896,39 +2001,141 @@ onUnmounted(() => {
           }"
         >
           <template #body>
-            <UFileUpload
-              v-model="selectedFiles"
-              :label="$t('dashboard.photos.uploader.label')"
-              :description="
-                $t('dashboard.photos.uploader.description', {
-                  maxSize: MAX_FILE_SIZE,
-                })
-              "
-              icon="tabler:cloud-upload"
-              layout="list"
-              size="xl"
-              accept="image/jpeg,image/png,image/heic,image/heif,video/quicktime,.mov"
-              multiple
-              highlight
-              dropzone
-              :file-delete="{ variant: 'soft', color: 'neutral' }"
-              :ui="{
-                root: 'w-full',
-                base: 'group relative flex flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-neutral-200/80 bg-white/90 px-6 py-12 text-center shadow-sm transition-all duration-300 hover:border-primary-400/80 hover:bg-primary-500/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/60 dark:border-neutral-700/70 dark:bg-neutral-900/80',
-                wrapper: 'flex flex-col items-center gap-2',
-                label:
-                  'text-base font-semibold text-neutral-800 dark:text-neutral-100',
-                description: 'text-sm text-neutral-500 dark:text-neutral-400',
-                files: 'mt-2 flex w-full flex-col gap-2 overflow-y-auto',
-                file: 'flex items-center justify-between gap-3 rounded-2xl border border-neutral-200/80 bg-white/80 px-4 py-3 text-left shadow-sm shadow-black/5 backdrop-blur-sm dark:border-neutral-800/80 dark:bg-neutral-900/70',
-                fileLeadingAvatar: 'ring-1 ring-white/80 dark:ring-neutral-800',
-                fileWrapper: 'min-w-0 flex-1',
-                fileName:
-                  'text-sm font-medium text-neutral-700 dark:text-neutral-100 truncate',
-                fileSize: 'text-xs text-neutral-500 dark:text-neutral-400',
-                fileTrailingButton: 'text-neutral-400 hover:text-error-500',
-              }"
-            />
+            <div class="space-y-4">
+              <UFileUpload
+                v-model="selectedFiles"
+                :label="$t('dashboard.photos.uploader.label')"
+                :description="
+                  $t('dashboard.photos.uploader.description', {
+                    maxSize: MAX_FILE_SIZE,
+                  })
+                "
+                icon="tabler:cloud-upload"
+                layout="list"
+                size="xl"
+                accept="image/jpeg,image/png,image/heic,image/heif,video/quicktime,.mov"
+                multiple
+                highlight
+                dropzone
+                :file-delete="{ variant: 'soft', color: 'neutral' }"
+                :ui="{
+                  root: 'w-full',
+                  base: 'group relative flex flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-neutral-200/80 bg-white/90 px-6 py-12 text-center shadow-sm transition-all duration-300 hover:border-primary-400/80 hover:bg-primary-500/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/60 dark:border-neutral-700/70 dark:bg-neutral-900/80',
+                  wrapper: 'flex flex-col items-center gap-2',
+                  label:
+                    'text-base font-semibold text-neutral-800 dark:text-neutral-100',
+                  description: 'text-sm text-neutral-500 dark:text-neutral-400',
+                  files: 'mt-2 flex w-full flex-col gap-2 overflow-y-auto max-h-[300px]',
+                  file: 'flex items-center justify-between gap-3 rounded-2xl border border-neutral-200/80 bg-white/80 px-4 py-3 text-left shadow-sm shadow-black/5 backdrop-blur-sm dark:border-neutral-800/80 dark:bg-neutral-900/70',
+                  fileLeadingAvatar: 'ring-1 ring-white/80 dark:ring-neutral-800',
+                  fileWrapper: 'min-w-0 flex-1',
+                  fileName:
+                    'text-sm font-medium text-neutral-700 dark:text-neutral-100 truncate',
+                  fileSize: 'text-xs text-neutral-500 dark:text-neutral-400',
+                  fileTrailingButton: 'text-neutral-400 hover:text-error-500',
+                }"
+              />
+
+              <!-- 文件状态显示区域 -->
+              <div
+                v-if="selectedFiles.length > 0 && duplicateCheckResults.size > 0"
+                class="space-y-2"
+              >
+                <div class="flex items-center justify-between px-2">
+                  <span class="text-sm font-medium text-neutral-700 dark:text-neutral-300">
+                    文件状态
+                  </span>
+                  <div class="flex items-center gap-2">
+                    <UBadge
+                      v-if="newFilesCount > 0"
+                      variant="soft"
+                      color="success"
+                      size="sm"
+                    >
+                      {{ newFilesCount }} 个新文件
+                    </UBadge>
+                    <UBadge
+                      v-if="existingFilesCount > 0"
+                      variant="soft"
+                      color="neutral"
+                      size="sm"
+                    >
+                      {{ existingFilesCount }} 个已存在
+                    </UBadge>
+                  </div>
+                </div>
+
+                <div class="max-h-[200px] overflow-y-auto space-y-2">
+                  <div
+                    v-for="file in selectedFiles"
+                    :key="file.name"
+                    class="flex items-center justify-between gap-3 rounded-xl border px-3 py-2 text-sm transition-colors"
+                    :class="
+                      duplicateCheckResults.get(file.name)?.exists
+                        ? 'border-neutral-200 bg-neutral-50/50 dark:border-neutral-800 dark:bg-neutral-900/30'
+                        : 'border-success-200 bg-success-50/30 dark:border-success-800/50 dark:bg-success-900/20'
+                    "
+                  >
+                    <div class="flex items-center gap-2 min-w-0 flex-1">
+                      <Icon
+                        :name="
+                          duplicateCheckResults.get(file.name)?.exists
+                            ? 'tabler:file-check'
+                            : 'tabler:file-plus'
+                        "
+                        class="size-4 shrink-0"
+                        :class="
+                          duplicateCheckResults.get(file.name)?.exists
+                            ? 'text-neutral-400 dark:text-neutral-500'
+                            : 'text-success-600 dark:text-success-400'
+                        "
+                      />
+                      <span
+                        class="truncate"
+                        :class="
+                          duplicateCheckResults.get(file.name)?.exists
+                            ? 'text-neutral-500 dark:text-neutral-400'
+                            : 'text-neutral-700 dark:text-neutral-200'
+                        "
+                      >
+                        {{ file.name }}
+                      </span>
+                    </div>
+                    <UBadge
+                      :variant="
+                        duplicateCheckResults.get(file.name)?.exists
+                          ? 'soft'
+                          : 'soft'
+                      "
+                      :color="
+                        duplicateCheckResults.get(file.name)?.exists
+                          ? 'neutral'
+                          : 'success'
+                      "
+                      size="xs"
+                    >
+                      {{
+                        duplicateCheckResults.get(file.name)?.exists
+                          ? '已存在'
+                          : '新文件'
+                      }}
+                    </UBadge>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 检查中的加载状态 -->
+              <div
+                v-if="checkingDuplicates"
+                class="flex items-center justify-center gap-2 py-4 text-sm text-neutral-500 dark:text-neutral-400"
+              >
+                <Icon
+                  name="tabler:loader-2"
+                  class="size-4 animate-spin"
+                />
+                <span>正在检查文件是否已存在...</span>
+              </div>
+            </div>
           </template>
 
           <template #footer>
@@ -1959,16 +2166,26 @@ onUnmounted(() => {
                   size="lg"
                   class="w-full sm:w-auto"
                   icon="tabler:upload"
-                  :disabled="!hasSelectedFiles"
+                  :disabled="!hasSelectedFiles || checkingDuplicates"
+                  :loading="checkingDuplicates"
                   @click="handleUpload"
                 >
-                  {{
-                    hasSelectedFiles
-                      ? $t('dashboard.photos.slideover.buttons.upload', {
-                          count: selectedFiles.length,
-                        })
-                      : $t('dashboard.photos.buttons.upload')
-                  }}
+                  <template v-if="checkingDuplicates">
+                    检查中...
+                  </template>
+                  <template v-else-if="hasSelectedFiles && existingFilesCount > 0">
+                    上传 {{ newFilesCount }} 个文件（跳过 {{ existingFilesCount }} 个）
+                  </template>
+                  <template v-else-if="hasSelectedFiles">
+                    {{
+                      $t('dashboard.photos.slideover.buttons.upload', {
+                        count: selectedFiles.length,
+                      })
+                    }}
+                  </template>
+                  <template v-else>
+                    {{ $t('dashboard.photos.buttons.upload') }}
+                  </template>
                 </UButton>
               </div>
             </div>
