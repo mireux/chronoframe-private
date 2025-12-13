@@ -3,6 +3,7 @@ interface FilterOptions {
   cameras: string[]
   lenses: string[]
   cities: string[]
+  albums: (number | 'none')[] // 相册ID数组，'none' 表示无相册
   ratings: number // 改为单个数字，表示最低评分
   search: string // 搜索关键词
 }
@@ -12,6 +13,7 @@ interface FilterStats {
   cameras: Map<string, number>
   lenses: Map<string, number>
   cities: Map<string, number>
+  albums: Map<number | 'none', number> // 相册统计，'none' 表示无相册
   ratings: Map<number, number>
 }
 
@@ -21,6 +23,7 @@ const globalFilters = ref<FilterOptions>({
   cameras: [],
   lenses: [],
   cities: [],
+  albums: [],
   ratings: 0,
   search: ''
 })
@@ -28,9 +31,30 @@ const globalFilters = ref<FilterOptions>({
 export function usePhotoFilters() {
   const { photos } = usePhotos()
   const { sortedPhotos } = usePhotoSort()
-  
+
   // 使用全局筛选状态
   const activeFilters = globalFilters
+
+  // 获取相册数据
+  const { data: albums } = useFetch<Array<{ id: number; title: string; photoIds: string[] }>>('/api/albums')
+
+  // 建立照片到相册的映射关系
+  const photoToAlbumsMap = computed(() => {
+    const map = new Map<string, number[]>()
+
+    if (albums.value) {
+      albums.value.forEach(album => {
+        album.photoIds.forEach(photoId => {
+          if (!map.has(photoId)) {
+            map.set(photoId, [])
+          }
+          map.get(photoId)!.push(album.id)
+        })
+      })
+    }
+
+    return map
+  })
 
   // 计算可用的筛选选项及其数量
   const filterStats = computed((): FilterStats => {
@@ -39,8 +63,12 @@ export function usePhotoFilters() {
       cameras: new Map(),
       lenses: new Map(),
       cities: new Map(),
+      albums: new Map(),
       ratings: new Map()
     }
+
+    // 统计无相册的照片数量
+    let photosWithoutAlbum = 0
 
     photos.value.forEach(photo => {
       // 标签统计
@@ -70,12 +98,27 @@ export function usePhotoFilters() {
         stats.cities.set(photo.city, (stats.cities.get(photo.city) || 0) + 1)
       }
 
+      // 相册统计
+      const photoAlbums = photoToAlbumsMap.value.get(photo.id)
+      if (photoAlbums && photoAlbums.length > 0) {
+        photoAlbums.forEach(albumId => {
+          stats.albums.set(albumId, (stats.albums.get(albumId) || 0) + 1)
+        })
+      } else {
+        photosWithoutAlbum++
+      }
+
       // 评分统计 (从 EXIF Rating 获取)
       if (photo.exif?.Rating && photo.exif.Rating > 0) {
         const rating = photo.exif.Rating
         stats.ratings.set(rating, (stats.ratings.get(rating) || 0) + 1)
       }
     })
+
+    // 添加"无相册"选项
+    if (photosWithoutAlbum > 0) {
+      stats.albums.set('none', photosWithoutAlbum)
+    }
 
     return stats
   })
@@ -99,6 +142,26 @@ export function usePhotoFilters() {
         .sort((a, b) => b[1] - a[1])
         .map(([city, count]) => ({ label: city, count })),
 
+      albums: Array.from(filterStats.value.albums.entries())
+        .sort((a, b) => {
+          // "无相册"选项排在最前面
+          if (a[0] === 'none') return -1
+          if (b[0] === 'none') return 1
+          // 其他相册按照照片数量降序排列
+          return b[1] - a[1]
+        })
+        .map(([albumId, count]) => {
+          if (albumId === 'none') {
+            return { label: '无相册', value: 'none', count }
+          }
+          const album = albums.value?.find(a => a.id === albumId)
+          return {
+            label: album?.title || `相册 ${albumId}`,
+            value: albumId,
+            count
+          }
+        }),
+
       ratings: Array.from(filterStats.value.ratings.entries())
         .sort((a, b) => b[0] - a[0]) // 按评分降序排列
         .map(([rating, count]) => ({ label: rating, count })),
@@ -112,6 +175,7 @@ export function usePhotoFilters() {
       cameras: activeFilters.value.cameras.length,
       lenses: activeFilters.value.lenses.length,
       cities: activeFilters.value.cities.length,
+      albums: activeFilters.value.albums.length,
       ratings: activeFilters.value.ratings > 0 ? 1 : 0,
       search: activeFilters.value.search.length > 0 ? 1 : 0
     }
@@ -146,7 +210,7 @@ export function usePhotoFilters() {
       // 标签筛选
       if (activeFilters.value.tags.length > 0) {
         const photoTags = photo.tags || []
-        const hasMatchingTag = activeFilters.value.tags.some(tag => 
+        const hasMatchingTag = activeFilters.value.tags.some(tag =>
           photoTags.includes(tag)
         )
         if (!hasMatchingTag) return false
@@ -154,7 +218,7 @@ export function usePhotoFilters() {
 
       // 相机筛选
       if (activeFilters.value.cameras.length > 0) {
-        const photoCamera = photo.exif?.Make && photo.exif?.Model 
+        const photoCamera = photo.exif?.Make && photo.exif?.Model
           ? `${photo.exif.Make} ${photo.exif.Model}`
           : null
         if (!photoCamera || !activeFilters.value.cameras.includes(photoCamera)) {
@@ -175,6 +239,27 @@ export function usePhotoFilters() {
       // 城市筛选
       if (activeFilters.value.cities.length > 0) {
         if (!photo.city || !activeFilters.value.cities.includes(photo.city)) {
+          return false
+        }
+      }
+
+      // 相册筛选（OR逻辑：只要照片在任一选中的相册中就显示）
+      if (activeFilters.value.albums.length > 0) {
+        const photoAlbums = photoToAlbumsMap.value.get(photo.id) || []
+        const isInNoAlbum = photoAlbums.length === 0
+
+        // 检查是否匹配任一筛选条件
+        const matchesFilter = activeFilters.value.albums.some(filterAlbum => {
+          if (filterAlbum === 'none') {
+            // 如果选中了"无相册"，检查照片是否不在任何相册中
+            return isInNoAlbum
+          } else {
+            // 检查照片是否在该相册中
+            return photoAlbums.includes(filterAlbum as number)
+          }
+        })
+
+        if (!matchesFilter) {
           return false
         }
       }
@@ -210,6 +295,7 @@ export function usePhotoFilters() {
       cameras: [],
       lenses: [],
       cities: [],
+      albums: [],
       ratings: 0,
       search: ''
     }
@@ -235,6 +321,7 @@ export function usePhotoFilters() {
            activeFilters.value.cameras.length > 0 ||
            activeFilters.value.lenses.length > 0 ||
            activeFilters.value.cities.length > 0 ||
+           activeFilters.value.albums.length > 0 ||
            activeFilters.value.ratings > 0 ||
            activeFilters.value.search.length > 0
   })

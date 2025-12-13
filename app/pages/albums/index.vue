@@ -108,6 +108,24 @@ const getPhotoTransform = (index: number, isHover: boolean) => {
 }
 
 const hoveredAlbum = ref<number | null>(null)
+
+// 上传对话框状态
+const isUploadDialogOpen = ref(false)
+const selectedAlbumForUpload = ref<number | null>(null)
+
+const openUploadDialog = (albumId: number, event: Event) => {
+  // 阻止事件冒泡，避免触发NuxtLink跳转
+  event.preventDefault()
+  event.stopPropagation()
+
+  selectedAlbumForUpload.value = albumId
+  isUploadDialogOpen.value = true
+}
+
+const handleUploadComplete = async (photoIds: string[]) => {
+  // 刷新相册数据
+  await refreshNuxtData('albums')
+}
 </script>
 
 <template>
@@ -307,11 +325,50 @@ const hoveredAlbum = ref<number | null>(null)
               >
                 {{ album.description || $t('ui.album.noDescription') }}
               </p>
+
+              <!-- Action Buttons -->
+              <div class="flex items-center gap-2 mt-3">
+                <UButton
+                  variant="soft"
+                  color="primary"
+                  icon="tabler:cloud-upload"
+                  size="xs"
+                  @click="(e) => openUploadDialog(album.id, e)"
+                >
+                  上传
+                </UButton>
+                <UButton
+                  variant="soft"
+                  color="neutral"
+                  icon="tabler:edit"
+                  size="xs"
+                  :to="`/dashboard/albums/${album.id}`"
+                  @click.stop
+                >
+                  编辑
+                </UButton>
+                <UButton
+                  variant="soft"
+                  color="error"
+                  icon="tabler:trash"
+                  size="xs"
+                  @click="(e) => { e.preventDefault(); e.stopPropagation(); /* TODO: 添加删除功能 */ }"
+                >
+                  删除
+                </UButton>
+              </div>
             </div>
           </div>
         </NuxtLink>
       </div>
     </div>
+
+    <!-- Upload Dialog -->
+    <PhotoUploadDialog
+      v-model:open="isUploadDialogOpen"
+      :target-album-id="selectedAlbumForUpload"
+      @upload-complete="handleUploadComplete"
+    />
   </div>
 </template>
 

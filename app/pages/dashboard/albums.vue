@@ -29,8 +29,10 @@ const isLoadingPhotos = ref(false)
 const isAlbumSlideoverOpen = ref(false)
 const isDeleteConfirmOpen = ref(false)
 const isPhotoSelectorOpen = ref(false)
+const isUploadDialogOpen = ref(false)
 
 const currentAlbum = ref<AlbumItem | null>(null)
+const selectedAlbumForUpload = ref<number | null>(null)
 
 const formData = reactive<AlbumFormState>({
   title: '',
@@ -129,6 +131,15 @@ const openEditSlideover = async (album: AlbumItem) => {
 const openDeleteConfirm = (album: AlbumItem) => {
   currentAlbum.value = album
   isDeleteConfirmOpen.value = true
+}
+
+const openUploadDialog = (album: AlbumItem) => {
+  selectedAlbumForUpload.value = album.id
+  isUploadDialogOpen.value = true
+}
+
+const handleUploadComplete = async (photoIds: string[]) => {
+  await loadAlbums()
 }
 
 const onFormSubmit = async (event: FormSubmitEvent<AlbumFormState>) => {
@@ -419,6 +430,15 @@ const columns: any[] = [
 
             <template #actions-cell="{ row }">
               <div class="flex gap-1">
+                <UButton
+                  variant="ghost"
+                  color="primary"
+                  size="xs"
+                  icon="tabler:cloud-upload"
+                  @click="
+                    openUploadDialog(row.original as unknown as AlbumItem)
+                  "
+                />
                 <UButton
                   variant="ghost"
                   color="primary"
@@ -963,6 +983,13 @@ const columns: any[] = [
             </div>
           </template>
         </UModal>
+
+        <!-- Upload Dialog -->
+        <PhotoUploadDialog
+          v-model:open="isUploadDialogOpen"
+          :target-album-id="selectedAlbumForUpload"
+          @upload-complete="handleUploadComplete"
+        />
       </div>
     </template>
   </UDashboardPanel>

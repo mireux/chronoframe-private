@@ -410,6 +410,24 @@ const toast = useToast()
 const selectedFiles = ref<File[]>([])
 const isUploadSlideoverOpen = ref(false)
 
+// 相册选择相关状态
+const selectedAlbumId = ref<number | null>(null)
+const { data: albums } = await useFetch<Array<{ id: number; title: string; photoIds: string[] }>>('/api/albums')
+
+const albumOptions = computed(() => {
+  if (!albums.value) return []
+  return [
+    { label: '不添加到相册', value: null },
+    ...albums.value.map((album) => ({
+      label: `${album.title} (${album.photoIds.length} 张照片)`,
+      value: album.id,
+    })),
+  ]
+})
+
+// 跟踪当前批次上传完成的照片ID
+const currentBatchPhotoIds = ref<string[]>([])
+
 // 重复检查相关状态
 interface DuplicateCheckResult {
   fileName: string
@@ -657,6 +675,12 @@ const startTaskStatusCheck = (taskId: number, fileId: string) => {
         // 停止状态检查
         clearInterval(intervalId)
         statusIntervals.value.delete(taskId)
+
+        // 记录完成的照片ID
+        const photoId = response.result?.photoId
+        if (photoId && !currentBatchPhotoIds.value.includes(photoId)) {
+          currentBatchPhotoIds.value.push(photoId)
+        }
 
         // 不再显示单独的成功提示，由上传组件统一处理
 
@@ -1125,12 +1149,17 @@ const handleUpload = async () => {
   const validFiles: File[] = []
   const fileIdMapping = new Map<File, string>()
   const skippedFiles: string[] = []
+  const skippedPhotoIds: string[] = [] // 记录跳过的照片ID
 
   for (const file of fileList) {
     // 检查文件是否已存在
     const duplicateResult = duplicateCheckResults.value.get(file.name)
     if (duplicateResult?.exists) {
       skippedFiles.push(file.name)
+      // 记录已存在照片的ID
+      if (duplicateResult.photoId) {
+        skippedPhotoIds.push(duplicateResult.photoId)
+      }
       continue
     }
 
@@ -1149,16 +1178,45 @@ const handleUpload = async () => {
   if (skippedFiles.length > 0) {
     toast.add({
       title: '已跳过重复文件',
-      description: `跳过了 ${skippedFiles.length} 个已存在的文件`,
+      description: `跳过了 ${skippedFiles.length} 个已存在的文件${selectedAlbumId.value ? '，但会添加到目标相册' : ''}`,
       color: 'info',
     })
   }
 
+  // 如果没有需要上传的文件，但有跳过的文件且选择了目标相册，仍然执行添加到相册的操作
   if (validFiles.length === 0) {
+    if (skippedFiles.length > 0 && selectedAlbumId.value && skippedPhotoIds.length > 0) {
+      // 直接将跳过的照片添加到相册
+      try {
+        await $fetch(`/api/albums/${selectedAlbumId.value}/photos`, {
+          method: 'POST',
+          body: {
+            photoIds: skippedPhotoIds,
+          },
+        })
+
+        toast.add({
+          title: '添加成功',
+          description: `已将 ${skippedPhotoIds.length} 张已存在的照片添加到相册`,
+          color: 'success',
+        })
+      } catch (error) {
+        console.error('添加照片到相册失败:', error)
+        toast.add({
+          title: '添加到相册失败',
+          description: '无法将照片添加到相册',
+          color: 'error',
+        })
+      }
+
+      selectedFiles.value = []
+      return
+    }
+
     if (skippedFiles.length > 0) {
       toast.add({
         title: '没有需要上传的文件',
-        description: '所有文件都已存在或验证失败',
+        description: '所有文件都已存在',
         color: 'warning',
       })
     } else {
@@ -1229,12 +1287,49 @@ const handleUpload = async () => {
     }
   }
 
+  // 重置当前批次照片ID列表，并添加跳过的照片ID
+  currentBatchPhotoIds.value = [...skippedPhotoIds]
+
   // 开始处理队列
   await processQueue()
 
   if (errors.length > 0) {
     console.error('批量上传错误详情:', errors)
   }
+
+  // 等待所有任务完成处理（给予足够时间让所有照片处理完成）
+  await new Promise((resolve) => setTimeout(resolve, 3000))
+
+  // 如果选择了目标相册，将所有照片添加到相册
+  if (selectedAlbumId.value && currentBatchPhotoIds.value.length > 0) {
+    try {
+      await $fetch(`/api/albums/${selectedAlbumId.value}/photos`, {
+        method: 'POST',
+        body: {
+          photoIds: currentBatchPhotoIds.value,
+        },
+      })
+
+      const totalCount = currentBatchPhotoIds.value.length
+      const newCount = totalCount - skippedPhotoIds.length
+
+      toast.add({
+        title: '上传完成',
+        description: `已将 ${totalCount} 张照片添加到相册${newCount > 0 ? `（${newCount} 张新上传）` : ''}`,
+        color: 'success',
+      })
+    } catch (error) {
+      console.error('添加照片到相册失败:', error)
+      toast.add({
+        title: '添加到相册失败',
+        description: '照片已上传，但添加到相册失败',
+        color: 'warning',
+      })
+    }
+  }
+
+  // 清空当前批次照片ID列表
+  currentBatchPhotoIds.value = []
 
   // 清空选中的文件
   selectedFiles.value = []
@@ -2015,6 +2110,24 @@ onUnmounted(() => {
         >
           <template #body>
             <div class="space-y-4">
+              <!-- 目标相册选择器 -->
+              <div class="px-4 py-3 bg-neutral-50 dark:bg-neutral-900/50 rounded-2xl border border-neutral-200 dark:border-neutral-800">
+                <label class="text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2 block">
+                  目标相册（可选）
+                </label>
+                <USelectMenu
+                  v-model="selectedAlbumId"
+                  :items="albumOptions"
+                  value-key="value"
+                  label-key="label"
+                  placeholder="选择相册或不添加到相册"
+                  class="w-full"
+                />
+                <p class="text-xs text-neutral-500 dark:text-neutral-400 mt-2">
+                  上传完成后，照片将自动添加到选中的相册
+                </p>
+              </div>
+
               <!-- 文件拖拽上传区域 - 防止被压缩 -->
               <div class="flex-shrink-0">
                 <UFileUpload

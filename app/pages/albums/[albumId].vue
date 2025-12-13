@@ -133,6 +133,18 @@ const goBackToAlbums = () => {
   router.push('/albums')
 }
 
+// 上传对话框状态
+const isUploadDialogOpen = ref(false)
+
+const handleUploadComplete = async (photoIds: string[]) => {
+  // 刷新相册数据
+  await refreshNuxtData(`/api/albums/${albumId.value}`)
+}
+
+const openUploadDialog = () => {
+  isUploadDialogOpen.value = true
+}
+
 onMounted(() => {
   window.addEventListener('scroll', handleScroll, { passive: true })
 })
@@ -264,6 +276,17 @@ onBeforeMount(() => {
                     {{ $dayjs(albumData.createdAt).fromNow() }}
                   </span>
                 </div>
+
+                <!-- Upload Button -->
+                <UButton
+                  variant="soft"
+                  color="primary"
+                  icon="tabler:cloud-upload"
+                  size="sm"
+                  @click="openUploadDialog"
+                >
+                  上传照片
+                </UButton>
               </div>
             </div>
           </motion.div>
@@ -372,6 +395,13 @@ onBeforeMount(() => {
         />
       </UTooltip>
     </motion.div>
+
+    <!-- Upload Dialog -->
+    <PhotoUploadDialog
+      v-model:open="isUploadDialogOpen"
+      :target-album-id="albumId"
+      @upload-complete="handleUploadComplete"
+    />
   </div>
 </template>
 

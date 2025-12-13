@@ -39,6 +39,13 @@ const tabItems = computed<TabsItem[]>(() => [
     slot: 'tags',
   },
   {
+    label: '相册',
+    value: 'albums',
+    badge: selectedCounts.value.albums || undefined,
+    icon: 'tabler:photo-album',
+    slot: 'albums',
+  },
+  {
     label: $t('ui.action.filter.tabs.cameras'),
     value: 'cameras',
     badge: selectedCounts.value.cameras || undefined,
@@ -184,6 +191,52 @@ const onShuffle = () => {
             class="text-center text-sm text-neutral-500 dark:text-neutral-400 py-4"
           >
             {{ $t('ui.action.filter.empty.tags') }}
+          </div>
+        </div>
+      </template>
+
+      <!-- 相册面板 -->
+      <template #albums>
+        <div class="space-y-0.5 max-h-64 overflow-y-auto">
+          <div
+            v-for="album in availableFilters.albums"
+            :key="album.value"
+            class="flex items-center justify-between cursor-pointer select-none hover:bg-neutral-400/30 dark:hover:bg-info-800/30 rounded-lg px-2 py-2"
+            :class="
+              isFilterSelected('albums', album.value)
+                ? 'bg-neutral-400/30 dark:bg-info-800/30'
+                : ''
+            "
+            @click="handleToggleFilter('albums', album.value)"
+          >
+            <div class="flex items-center gap-2 min-w-0 flex-1">
+              <Icon
+                :name="album.value === 'none' ? 'tabler:photo-off' : 'tabler:photo-album'"
+                class="size-4 shrink-0"
+                :class="album.value === 'none' ? 'text-neutral-400' : 'text-primary-500'"
+              />
+              <span class="text-sm text-default font-medium truncate">
+                {{ album.label }}
+              </span>
+              <UBadge
+                variant="soft"
+                color="neutral"
+                size="xs"
+              >
+                {{ album.count }}
+              </UBadge>
+            </div>
+            <Icon
+              v-if="isFilterSelected('albums', album.value)"
+              name="tabler:check"
+              class="size-4 text-green-500 shrink-0"
+            />
+          </div>
+          <div
+            v-if="availableFilters.albums.length === 0"
+            class="text-center text-sm text-neutral-500 dark:text-neutral-400 py-4"
+          >
+            暂无相册
           </div>
         </div>
       </template>
