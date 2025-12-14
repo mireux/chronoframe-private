@@ -30,6 +30,10 @@ const videoBlob = ref<Blob | null>(null)
 const videoBlobUrl = ref<string | null>(null)
 const { convertMovToMp4, getProcessingState } = useLivePhotoProcessor()
 
+const normalVideoRef = useDomRef()
+const isNormalVideoPlaying = ref(false)
+const isNormalVideoLoaded = ref(false)
+
 const isTouching = ref(false)
 const touchCount = ref(0)
 const longPressTimer = ref<NodeJS.Timeout | null>(null)
@@ -58,6 +62,16 @@ const aspectRatio = computed(() => {
 
 // Show info overlay only when not playing video or video has finished
 const shouldShowInfoOverlay = computed(() => {
+  if (props.photo.isVideo) {
+    if (isMobile.value) {
+      if (isTouching.value || isNormalVideoPlaying.value) return false
+      return true
+    }
+    if (!isHovering.value) return true
+    if (isNormalVideoPlaying.value) return false
+    return true
+  }
+
   if (!props.photo.isLivePhoto) return true
 
   // On mobile, don't show overlay when touching or playing video
@@ -89,6 +103,11 @@ const handleMouseEnter = async () => {
 
   isHovering.value = true
 
+  if (props.photo.isVideo && props.photo.originalUrl) {
+    playNormalVideo()
+    return
+  }
+
   if (!props.photo.isLivePhoto || !props.photo.livePhotoVideoUrl) return
 
   // 如果视频已准备好，立即播放
@@ -105,6 +124,12 @@ const handleMouseLeave = () => {
   if (isMobile.value) return
 
   isHovering.value = false
+
+  if (normalVideoRef.value && !normalVideoRef.value.paused) {
+    normalVideoRef.value.pause()
+    normalVideoRef.value.currentTime = 0
+  }
+
   if (videoRef.value && !videoRef.value.paused) {
     videoRef.value.pause()
     videoRef.value.currentTime = 0
@@ -113,8 +138,8 @@ const handleMouseLeave = () => {
   // Use a slight delay for smoother transition when mouse leaves
   setTimeout(() => {
     if (!isHovering.value && !isTouching.value) {
-      // Also check touching state
       isVideoPlaying.value = false
+      isNormalVideoPlaying.value = false
     }
   }, 150)
 }
@@ -195,9 +220,92 @@ const handleVideoEnded = () => {
   }, 100)
 }
 
+const playNormalVideo = () => {
+  if (!normalVideoRef.value || !props.photo.originalUrl) return
+
+  if (normalVideoRef.value.readyState < 2) {
+    normalVideoRef.value.load()
+  }
+
+  normalVideoRef.value.currentTime = 0
+  isNormalVideoPlaying.value = true
+
+  if (isMobile.value && 'vibrate' in navigator) {
+    navigator.vibrate(50)
+  }
+
+  nextTick(() => {
+    if (!normalVideoRef.value || !isNormalVideoPlaying.value) return
+
+    normalVideoRef.value.muted = true
+    normalVideoRef.value.playsInline = true
+
+    const playPromise = normalVideoRef.value.play()
+
+    if (playPromise !== undefined) {
+      playPromise
+        .then(() => {})
+        .catch((error: any) => {
+          console.warn('Failed to play video:', error)
+          isNormalVideoPlaying.value = false
+
+          if (error.name === 'NotAllowedError') {
+            console.log('Video play blocked by browser policy, retrying...')
+            if (normalVideoRef.value) {
+              normalVideoRef.value.load()
+              setTimeout(() => {
+                if (normalVideoRef.value && isNormalVideoPlaying.value) {
+                  const retryPromise = normalVideoRef.value.play()
+                  if (retryPromise !== undefined) {
+                    retryPromise.catch(() => {
+                      isNormalVideoPlaying.value = false
+                    })
+                  }
+                }
+              }, 100)
+            }
+          }
+        })
+    }
+  })
+}
+
+const handleNormalVideoEnded = () => {
+  if (isMobile.value && 'vibrate' in navigator) {
+    navigator.vibrate(30)
+  }
+
+  setTimeout(() => {
+    isNormalVideoPlaying.value = false
+  }, 100)
+}
+
+const handleNormalVideoLoaded = () => {
+  isNormalVideoLoaded.value = true
+}
+
 // Mobile touch handlers for LivePhoto
 const handleTouchStart = (event: TouchEvent) => {
-  if (!isMobile.value || !props.photo.isLivePhoto || !videoBlobUrl.value) return
+  if (!isMobile.value) return
+
+  if (props.photo.isVideo && props.photo.originalUrl) {
+    touchCount.value = event.touches.length
+    if (event.touches.length === 1) {
+      const touch = event.touches[0]
+      if (touch) {
+        initialTouchPos.value = { x: touch.clientX, y: touch.clientY }
+        isTouching.value = true
+        longPressTimer.value = setTimeout(() => {
+          if (isTouching.value && touchCount.value === 1) {
+            playNormalVideo()
+          }
+        }, 350)
+      }
+    }
+    return
+  }
+
+  if (!props.photo.isLivePhoto || !videoBlobUrl.value) return
 
   touchCount.value = event.touches.length
 
@@ -251,33 +359,39 @@ const handleTouchEnd = () => {
 }
 
 const cancelLivePhotoTouch = () => {
-  const wasPlaying = isVideoPlaying.value
+  const wasPlaying = isVideoPlaying.value || isNormalVideoPlaying.value
 
   touchCount.value = 0
   isTouching.value = false
   initialTouchPos.value = null
 
-  // Clear the long press timer
   if (longPressTimer.value) {
     clearTimeout(longPressTimer.value)
     longPressTimer.value = null
   }
 
-  // Stop video playback
+  if (normalVideoRef.value && !normalVideoRef.value.paused) {
+    normalVideoRef.value.pause()
+    normalVideoRef.value.currentTime = 0
+
+    if (isMobile.value && wasPlaying && 'vibrate' in navigator) {
+      navigator.vibrate(25)
+    }
+  }
+
   if (videoRef.value && !videoRef.value.paused) {
     videoRef.value.pause()
     videoRef.value.currentTime = 0
 
-    // Provide haptic feedback on mobile when manually stopping playback
     if (isMobile.value && wasPlaying && 'vibrate' in navigator) {
-      navigator.vibrate(25) // Very short vibration for manual stop
+      navigator.vibrate(25)
     }
   }
 
-  // Use a slight delay for smoother transition
   setTimeout(() => {
     if (!isTouching.value && !isHovering.value) {
       isVideoPlaying.value = false
+      isNormalVideoPlaying.value = false
     }
   }, 150)
 }
@@ -285,7 +399,7 @@ const cancelLivePhotoTouch = () => {
 // Handle click events - prevent opening viewer when video is playing
 const handleClick = (event: Event) => {
   // On mobile, if video is playing or user is touching, don't open the viewer
-  if (isMobile.value && (isVideoPlaying.value || isTouching.value)) {
+  if (isMobile.value && (isVideoPlaying.value || isNormalVideoPlaying.value || isTouching.value)) {
     event.preventDefault()
     event.stopPropagation()
     return
@@ -296,6 +410,7 @@ const handleClick = (event: Event) => {
     photo_id: props.photo.id,
     photo_title: props.photo.title || 'Untitled',
     has_live_photo: props.photo.isLivePhoto ? 'yes' : 'no',
+    is_video: props.photo.isVideo ? 'yes' : 'no',
   })
 
   // On desktop, always allow opening the viewer
@@ -537,6 +652,35 @@ onUnmounted(() => {
         >
           {{ formatDuration(photo.duration) }}
         </div>
+
+        <!-- Normal video preview with enhanced motion transition -->
+        <motion.video
+          v-if="photo.isVideo && photo.originalUrl"
+          ref="normalVideoRef"
+          :src="photo.originalUrl"
+          class="absolute inset-0 w-full h-full object-cover"
+          :class="{ 'select-none pointer-events-none': isNormalVideoPlaying }"
+          muted
+          playsinline
+          preload="metadata"
+          :initial="{
+            opacity: 0,
+            scale: 1.02,
+          }"
+          :animate="{
+            opacity: isNormalVideoPlaying ? 1 : 0,
+            scale: isNormalVideoPlaying ? 1 : 1.02,
+          }"
+          :transition="{
+            duration: isNormalVideoPlaying ? 0.3 : 0.2,
+            ease: isNormalVideoPlaying
+              ? [0.23, 1, 0.32, 1]
+              : [0.25, 0.46, 0.45, 0.94],
+            delay: isNormalVideoPlaying ? 0.05 : 0,
+          }"
+          @ended="handleNormalVideoEnded"
+          @loadeddata="handleNormalVideoLoaded"
+        />
 
         <!-- LivePhoto video with enhanced motion transition -->
         <motion.video
