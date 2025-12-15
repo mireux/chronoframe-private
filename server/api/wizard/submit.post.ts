@@ -27,8 +27,12 @@ export default eventHandler(async (event) => {
         token: z.string().min(1),
         style: z.string().optional(),
         securityCode: z.string().optional(),
-        locationKey: z.string().optional(),
       }),
+      location: z.object({
+        provider: z.enum(['mapbox', 'nominatim', 'amap']),
+        token: z.string().optional(),
+        baseUrl: z.string().optional(),
+      }).optional(),
     }).parse,
   )
 
@@ -89,13 +93,21 @@ export default eventHandler(async (event) => {
   } else if (body.map.provider === 'amap') {
     await settingsManager.set('map', 'amap.key', body.map.token)
     if (body.map.securityCode) await settingsManager.set('map', 'amap.securityCode', body.map.securityCode)
-    if (body.map.locationKey) {
-      await settingsManager.set('location', 'provider', 'amap')
-      await settingsManager.set('location', 'amap.key', body.map.locationKey)
+  }
+
+  // 5. Handle Location Settings
+  if (body.location) {
+    await settingsManager.set('location', 'provider', body.location.provider)
+    if (body.location.provider === 'mapbox' && body.location.token) {
+      await settingsManager.set('location', 'mapbox.token', body.location.token)
+    } else if (body.location.provider === 'nominatim' && body.location.baseUrl) {
+      await settingsManager.set('location', 'nominatim.baseUrl', body.location.baseUrl)
+    } else if (body.location.provider === 'amap' && body.location.token) {
+      await settingsManager.set('location', 'amap.key', body.location.token)
     }
   }
 
-  // 5. Mark Complete
+  // 6. Mark Complete
   await settingsManager.set('system', 'firstLaunch', false, undefined, true)
 
   return { success: true }

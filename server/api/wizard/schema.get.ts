@@ -118,7 +118,7 @@ export default eventHandler(async (event) => {
          return {
            ...setting,
            ui: {
-             type: 'custom',
+             type: 'tabs',
              options: [
                {
                  label: 'wizard.map.provider.mapbox.label',
@@ -137,6 +137,36 @@ export default eventHandler(async (event) => {
                  value: 'amap',
                  icon: 'tabler:map-pin',
                  description: 'wizard.map.provider.amap.description'
+               },
+             ]
+           }
+         }
+      }
+
+      // Patch for Wizard Location Provider to use rich selector
+      if (query.namespace === 'location' && setting.key === 'provider') {
+         return {
+           ...setting,
+           ui: {
+             type: 'tabs',
+             options: [
+               {
+                 label: 'wizard.location.provider.mapbox.label',
+                 value: 'mapbox',
+                 icon: 'simple-icons:mapbox',
+                 description: 'wizard.location.provider.mapbox.description'
+               },
+               {
+                 label: 'wizard.location.provider.nominatim.label',
+                 value: 'nominatim',
+                 icon: 'simple-icons:openstreetmap',
+                 description: 'wizard.location.provider.nominatim.description'
+               },
+               {
+                 label: 'wizard.location.provider.amap.label',
+                 value: 'amap',
+                 icon: 'tabler:map-pin',
+                 description: 'wizard.location.provider.amap.description'
                },
              ]
            }

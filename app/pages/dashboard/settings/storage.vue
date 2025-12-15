@@ -25,9 +25,14 @@ const {
   loading: storageLoading,
 } = useSettingsForm('storage')
 
-const storageEncryptionFields = computed(() =>
-  storageFields.value.filter((f) => f.key.startsWith('encryption.')),
-)
+const storageEncryptionFields = computed(() => {
+  return storageFields.value.filter((field) => {
+    if (!field.key.startsWith('encryption.')) return false
+    if (!field.ui?.visibleIf) return true
+    const { fieldKey, value } = field.ui.visibleIf
+    return storageState[fieldKey] === value
+  })
+})
 
 const handleStorageEncryptionSubmit = async () => {
   try {

@@ -1,4 +1,5 @@
 <script lang="ts" setup>
+import type { FieldDescriptor } from '~~/shared/types/settings'
 definePageMeta({
   layout: 'dashboard',
 })
@@ -13,6 +14,23 @@ const { fields: oauthFields, state: oauthState, submit: oauthSubmit, loading: oa
 const { fields: analyticsFields, state: analyticsState, submit: analyticsSubmit, loading: analyticsLoading } = useSettingsForm('analytics')
 const { fields: uploadFields, state: uploadState, submit: uploadSubmit, loading: uploadLoading } = useSettingsForm('upload')
 const { fields: securityFields, state: securityState, submit: securitySubmit, loading: securityLoading } = useSettingsForm('security')
+
+const filterVisible = (fields: FieldDescriptor[], state: Record<string, any>) => {
+  return fields.filter((field) => {
+    if (!field.ui?.visibleIf) return true
+    const { fieldKey, value } = field.ui.visibleIf
+    return state[fieldKey] === value
+  })
+}
+
+const visibleOAuthFields = computed(() => filterVisible(oauthFields.value, oauthState))
+const visibleAnalyticsFields = computed(() =>
+  filterVisible(analyticsFields.value, analyticsState),
+)
+const visibleUploadFields = computed(() => filterVisible(uploadFields.value, uploadState))
+const visibleSecurityFields = computed(() =>
+  filterVisible(securityFields.value, securityState),
+)
 
 const handleOAuthSubmit = async () => {
   try {
@@ -66,7 +84,7 @@ const handleSecuritySubmit = async () => {
             @submit="handleOAuthSubmit"
           >
             <SettingField
-              v-for="field in oauthFields"
+              v-for="field in visibleOAuthFields"
               :key="field.key"
               :field="field"
               :model-value="oauthState[field.key]"
@@ -98,7 +116,7 @@ const handleSecuritySubmit = async () => {
             @submit="handleAnalyticsSubmit"
           >
             <SettingField
-              v-for="field in analyticsFields"
+              v-for="field in visibleAnalyticsFields"
               :key="field.key"
               :field="field"
               :model-value="analyticsState[field.key]"
@@ -130,7 +148,7 @@ const handleSecuritySubmit = async () => {
             @submit="handleUploadSubmit"
           >
             <SettingField
-              v-for="field in uploadFields"
+              v-for="field in visibleUploadFields"
               :key="field.key"
               :field="field"
               :model-value="uploadState[field.key]"
@@ -162,7 +180,7 @@ const handleSecuritySubmit = async () => {
             @submit="handleSecuritySubmit"
           >
             <SettingField
-              v-for="field in securityFields"
+              v-for="field in visibleSecurityFields"
               :key="field.key"
               :field="field"
               :model-value="securityState[field.key]"

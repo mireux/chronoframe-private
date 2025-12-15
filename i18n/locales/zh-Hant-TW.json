@@ -950,7 +950,11 @@
         },
         "forcePathStyle": {
           "label": "強制路徑方式",
-          "description": "使用路徑方式 URL 而不是虛擬主機方式"
+          "description": "使用路徑方式 URL 而不是虛擬主機方式",
+          "options": {
+            "off": "關閉",
+            "on": "開啟"
+          }
         },
         "maxKeys": {
           "label": "最大金鑰數",
@@ -1017,12 +1021,107 @@
         "enabled": {
           "label": "啟用儲存加密",
           "description": "上傳的原始檔與產生的縮略圖會以加密形式儲存於儲存方案中",
-          "help": "開啟後儲存端只保存密文；使用者存取時由系統按需解密並呈現"
+          "help": "開啟後儲存端只保存密文；使用者存取時由系統按需解密並呈現",
+          "options": {
+            "off": "關閉",
+            "on": "開啟"
+          }
         },
         "key": {
           "label": "加密金鑰",
           "description": "用於加密/解密儲存檔案的金鑰",
           "help": "建議使用隨機 32 位元組金鑰（hex/base64）；不要遺失或隨意更換，否則歷史檔案將無法解密"
+        }
+      }
+    },
+    "oauth": {
+      "github": {
+        "enabled": {
+          "label": "啟用 GitHub OAuth",
+          "description": "允許使用者使用 GitHub 帳號登入",
+          "options": {
+            "off": "關閉",
+            "on": "開啟"
+          }
+        },
+        "clientId": {
+          "label": "GitHub Client ID",
+          "description": "GitHub OAuth 應用程式的 Client ID"
+        },
+        "clientSecret": {
+          "label": "GitHub Client Secret",
+          "description": "GitHub OAuth 應用程式的 Client Secret"
+        }
+      }
+    },
+    "analytics": {
+      "gtag": {
+        "id": {
+          "label": "Google Analytics ID",
+          "description": "Google Analytics 追蹤 ID（例如 G-XXXXXXX）"
+        }
+      },
+      "matomo": {
+        "enabled": {
+          "label": "啟用 Matomo 分析",
+          "description": "啟用 Matomo 網站分析統計",
+          "options": {
+            "off": "關閉",
+            "on": "開啟"
+          }
+        },
+        "url": {
+          "label": "Matomo 實例 URL",
+          "description": "Matomo 伺服器地址（例如 https://matomo.example.com）"
+        },
+        "siteId": {
+          "label": "Matomo 站點 ID",
+          "description": "Matomo 中設定的站點 ID"
+        }
+      }
+    },
+    "upload": {
+      "mime": {
+        "whitelistEnabled": {
+          "label": "啟用 MIME 類型白名單",
+          "description": "啟用後只允許上傳指定類型的檔案",
+          "options": {
+            "off": "關閉",
+            "on": "開啟"
+          }
+        },
+        "whitelist": {
+          "label": "允許的 MIME 類型",
+          "description": "允許上傳的檔案類型清單，以逗號分隔"
+        }
+      },
+      "duplicateCheck": {
+        "enabled": {
+          "label": "啟用重複檔案偵測",
+          "description": "上傳時自動偵測重複檔案",
+          "options": {
+            "off": "關閉",
+            "on": "開啟"
+          }
+        },
+        "mode": {
+          "label": "重複檔案處理模式",
+          "description": "偵測到重複檔案時的處理方式",
+          "options": {
+            "skip": "略過",
+            "warn": "警告並覆蓋",
+            "block": "阻止上傳"
+          }
+        }
+      }
+    },
+    "security": {
+      "allowInsecureCookie": {
+        "label": "允許不安全的 Cookie",
+        "description": "僅供開發環境使用，生產環境請勿啟用",
+        "options": {
+          "off": "不允許",
+          "on": "允許"
         }
       }
     }
@@ -1043,6 +1142,26 @@
         "maplibre": {
           "label": "MapLibre",
           "description": "Mapbox GL JS 的開源分支。"
+        },
+        "amap": {
+          "label": "高德地圖",
+          "description": "適合中國地區使用的地圖服務，支援中文地址解析。"
+        }
+      }
+    },
+    "location": {
+      "provider": {
+        "mapbox": {
+          "label": "Mapbox",
+          "description": "使用 Mapbox 的地理編碼服務將座標轉換為地址。"
+        },
+        "nominatim": {
+          "label": "Nominatim",
+          "description": "OpenStreetMap 提供的免費開源地理編碼服務。"
+        },
+        "amap": {
+          "label": "高德地圖",
+          "description": "適合中國地區使用的地理編碼服務，提供準確的中文地址。"
         }
       }
     }

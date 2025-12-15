@@ -98,12 +98,6 @@ export const MAP_SETTINGS_UI: Record<string, FieldUIConfig> = {
     visibleIf: { fieldKey: 'provider', value: 'amap' },
     help: 'settings.map.amap.securityCode.help',
   },
-  'amap.locationKey': {
-    type: 'password',
-    placeholder: '请输入高德 Web 服务 API Key（可选）',
-    visibleIf: { fieldKey: 'provider', value: 'amap' },
-    help: 'settings.map.amap.locationKey.help',
-  },
 }
 
 export const LOCATION_SETTINGS_UI: Record<string, FieldUIConfig> = {
@@ -133,6 +127,134 @@ export const LOCATION_SETTINGS_UI: Record<string, FieldUIConfig> = {
     required: true,
     visibleIf: { fieldKey: 'provider', value: 'amap' },
     help: 'settings.location.amap.key.help',
+  },
+}
+
+export const OAUTH_SETTINGS_UI: Record<string, FieldUIConfig> = {
+  'github.enabled': {
+    type: 'tabs',
+    options: [
+      {
+        label: 'settings.oauth.github.enabled.options.off',
+        value: false,
+        icon: 'tabler:toggle-left',
+      },
+      {
+        label: 'settings.oauth.github.enabled.options.on',
+        value: true,
+        icon: 'tabler:toggle-right',
+      },
+    ],
+  },
+  'github.clientId': {
+    type: 'input',
+    visibleIf: { fieldKey: 'github.enabled', value: true },
+  },
+  'github.clientSecret': {
+    type: 'password',
+    visibleIf: { fieldKey: 'github.enabled', value: true },
+  },
+}
+
+export const ANALYTICS_SETTINGS_UI: Record<string, FieldUIConfig> = {
+  'gtag.id': {
+    type: 'input',
+  },
+  'matomo.enabled': {
+    type: 'tabs',
+    options: [
+      {
+        label: 'settings.analytics.matomo.enabled.options.off',
+        value: false,
+        icon: 'tabler:toggle-left',
+      },
+      {
+        label: 'settings.analytics.matomo.enabled.options.on',
+        value: true,
+        icon: 'tabler:toggle-right',
+      },
+    ],
+  },
+  'matomo.url': {
+    type: 'input',
+    visibleIf: { fieldKey: 'matomo.enabled', value: true },
+  },
+  'matomo.siteId': {
+    type: 'input',
+    visibleIf: { fieldKey: 'matomo.enabled', value: true },
+  },
+}
+
+export const UPLOAD_SETTINGS_UI: Record<string, FieldUIConfig> = {
+  'mime.whitelistEnabled': {
+    type: 'tabs',
+    options: [
+      {
+        label: 'settings.upload.mime.whitelistEnabled.options.off',
+        value: false,
+        icon: 'tabler:toggle-left',
+      },
+      {
+        label: 'settings.upload.mime.whitelistEnabled.options.on',
+        value: true,
+        icon: 'tabler:toggle-right',
+      },
+    ],
+  },
+  'mime.whitelist': {
+    type: 'textarea',
+    visibleIf: { fieldKey: 'mime.whitelistEnabled', value: true },
+  },
+  'duplicateCheck.enabled': {
+    type: 'tabs',
+    options: [
+      {
+        label: 'settings.upload.duplicateCheck.enabled.options.off',
+        value: false,
+        icon: 'tabler:toggle-left',
+      },
+      {
+        label: 'settings.upload.duplicateCheck.enabled.options.on',
+        value: true,
+        icon: 'tabler:toggle-right',
+      },
+    ],
+  },
+  'duplicateCheck.mode': {
+    type: 'tabs',
+    options: [
+      {
+        label: 'settings.upload.duplicateCheck.mode.options.skip',
+        value: 'skip',
+      },
+      {
+        label: 'settings.upload.duplicateCheck.mode.options.warn',
+        value: 'warn',
+      },
+      {
+        label: 'settings.upload.duplicateCheck.mode.options.block',
+        value: 'block',
+      },
+    ],
+    visibleIf: { fieldKey: 'duplicateCheck.enabled', value: true },
+  },
+}
+
+export const SECURITY_SETTINGS_UI: Record<string, FieldUIConfig> = {
+  allowInsecureCookie: {
+    type: 'tabs',
+    options: [
+      {
+        label: 'settings.security.allowInsecureCookie.options.off',
+        value: false,
+        icon: 'tabler:toggle-left',
+      },
+      {
+        label: 'settings.security.allowInsecureCookie.options.on',
+        value: true,
+        icon: 'tabler:toggle-right',
+      },
+    ],
   },
 }
 
@@ -226,7 +348,19 @@ export const STORAGE_SETTINGS_UI: Record<string, FieldUIConfig> = {
     visibleIf: { fieldKey: 'provider', value: 's3' }
   },
   's3.forcePathStyle': {
-    type: 'toggle',
+    type: 'tabs',
+    options: [
+      {
+        label: 'settings.storage.s3.forcePathStyle.options.off',
+        value: false,
+        icon: 'tabler:toggle-left',
+      },
+      {
+        label: 'settings.storage.s3.forcePathStyle.options.on',
+        value: true,
+        icon: 'tabler:toggle-right',
+      },
+    ],
     help: 'settings.storage.s3.forcePathStyle.description',
     visibleIf: { fieldKey: 'provider', value: 's3' }
   },
@@ -296,13 +430,28 @@ export const STORAGE_SETTINGS_UI: Record<string, FieldUIConfig> = {
     visibleIf: { fieldKey: 'provider', value: 'openlist' }
   },
   'encryption.enabled': {
-    type: 'toggle',
+    // `UToggle` 在部分 Nuxt UI 版本/主题下可能不可用或不可见；
+    // 这里改为 `UTabs`（关闭/开启）以保证一致可用的显示效果。
+    type: 'tabs',
+    options: [
+      {
+        label: 'settings.storage.encryption.enabled.options.off',
+        value: false,
+        icon: 'tabler:lock-off',
+      },
+      {
+        label: 'settings.storage.encryption.enabled.options.on',
+        value: true,
+        icon: 'tabler:lock',
+      },
+    ],
     help: 'settings.storage.encryption.enabled.help',
   },
   'encryption.key': {
     type: 'password',
     placeholder: 'base64 / hex / passphrase',
     help: 'settings.storage.encryption.key.help',
+    visibleIf: { fieldKey: 'encryption.enabled', value: true },
   },
 }
 
@@ -318,6 +467,10 @@ export function getSettingUIConfig(
     app: APP_SETTINGS_UI,
     map: MAP_SETTINGS_UI,
     location: LOCATION_SETTINGS_UI,
+    oauth: OAUTH_SETTINGS_UI,
+    analytics: ANALYTICS_SETTINGS_UI,
+    upload: UPLOAD_SETTINGS_UI,
+    security: SECURITY_SETTINGS_UI,
     storage: STORAGE_SETTINGS_UI,
   }
 

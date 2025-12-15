@@ -349,7 +349,11 @@
         "enabled": {
           "label": "Encrypt Storage",
           "description": "Encrypt files before storing them in the configured provider",
-          "help": "When enabled, uploads and generated thumbnails are stored encrypted; the app will decrypt when serving to users"
+          "help": "When enabled, uploads and generated thumbnails are stored encrypted; the app will decrypt when serving to users",
+          "options": {
+            "off": "Off",
+            "on": "On"
+          }
         },
         "key": {
           "label": "Encryption Key",
@@ -950,7 +954,11 @@
         },
         "forcePathStyle": {
           "label": "パススタイルを強制",
-          "description": "仮想ホストスタイルではなく、パススタイル URL を使用"
+          "description": "仮想ホストスタイルではなく、パススタイル URL を使用",
+          "options": {
+            "off": "Off",
+            "on": "On"
+          }
         },
         "maxKeys": {
           "label": "最大キー数",
@@ -1017,12 +1025,107 @@
         "enabled": {
           "label": "Encrypt Storage",
           "description": "Encrypt files before storing them in the configured provider",
-          "help": "When enabled, uploads and generated thumbnails are stored encrypted; the app will decrypt when serving to users"
+          "help": "When enabled, uploads and generated thumbnails are stored encrypted; the app will decrypt when serving to users",
+          "options": {
+            "off": "Off",
+            "on": "On"
+          }
         },
         "key": {
           "label": "Encryption Key",
           "description": "Key used to encrypt/decrypt stored files",
           "help": "Use a random 32-byte key (hex/base64) and keep it safe; changing it will make old encrypted files unreadable"
+        }
+      }
+    },
+    "oauth": {
+      "github": {
+        "enabled": {
+          "label": "Enable GitHub OAuth",
+          "description": "Allow users to sign in with GitHub",
+          "options": {
+            "off": "Off",
+            "on": "On"
+          }
+        },
+        "clientId": {
+          "label": "GitHub Client ID",
+          "description": "Client ID of your GitHub OAuth App"
+        },
+        "clientSecret": {
+          "label": "GitHub Client Secret",
+          "description": "Client secret of your GitHub OAuth App"
+        }
+      }
+    },
+    "analytics": {
+      "gtag": {
+        "id": {
+          "label": "Google Analytics ID",
+          "description": "Google Analytics tracking ID (e.g. G-XXXXXXX)"
+        }
+      },
+      "matomo": {
+        "enabled": {
+          "label": "Enable Matomo Analytics",
+          "description": "Enable Matomo website analytics tracking",
+          "options": {
+            "off": "Off",
+            "on": "On"
+          }
+        },
+        "url": {
+          "label": "Matomo URL",
+          "description": "Matomo server URL (e.g. https://matomo.example.com)"
+        },
+        "siteId": {
+          "label": "Matomo Site ID",
+          "description": "Site ID configured in Matomo"
+        }
+      }
+    },
+    "upload": {
+      "mime": {
+        "whitelistEnabled": {
+          "label": "Enable MIME Type Whitelist",
+          "description": "When enabled, only allow uploading files of specified types",
+          "options": {
+            "off": "Off",
+            "on": "On"
+          }
+        },
+        "whitelist": {
+          "label": "Allowed MIME Types",
+          "description": "Comma-separated list of allowed MIME types"
+        }
+      },
+      "duplicateCheck": {
+        "enabled": {
+          "label": "Enable Duplicate Check",
+          "description": "Automatically detect duplicate files during upload",
+          "options": {
+            "off": "Off",
+            "on": "On"
+          }
+        },
+        "mode": {
+          "label": "Duplicate Handling Mode",
+          "description": "How to handle detected duplicate files",
+          "options": {
+            "skip": "Skip",
+            "warn": "Warn & overwrite",
+            "block": "Block upload"
+          }
+        }
+      }
+    },
+    "security": {
+      "allowInsecureCookie": {
+        "label": "Allow Insecure Cookie",
+        "description": "For development only. Do not enable in production.",
+        "options": {
+          "off": "Off",
+          "on": "On"
         }
       }
     }
@@ -1043,6 +1146,26 @@
         "maplibre": {
           "label": "MapLibre",
           "description": "Mapbox GL JS のオープンソースフォーク。"
+        },
+        "amap": {
+          "label": "高徳地図（AMap）",
+          "description": "中国向けに最適化された地図サービス、中国語の住所対応。"
+        }
+      }
+    },
+    "location": {
+      "provider": {
+        "mapbox": {
+          "label": "Mapbox",
+          "description": "Mapboxのジオコーディングサービスを使用して座標を住所に変換します。"
+        },
+        "nominatim": {
+          "label": "Nominatim",
+          "description": "OpenStreetMapが提供する無料のオープンソースジオコーディングサービス。"
+        },
+        "amap": {
+          "label": "高徳地図（AMap）",
+          "description": "中国向けに最適化されたジオコーディングサービス、正確な中国語の住所。"
         }
       }
     }

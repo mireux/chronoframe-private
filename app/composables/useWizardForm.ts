@@ -22,6 +22,7 @@ export function useWizardForm(namespace: string) {
         case 'app': return store.site
         case 'storage': return store.storage
         case 'map': return store.map
+        case 'location': return store.location
         default: return {}
       }
     },
@@ -31,6 +32,7 @@ export function useWizardForm(namespace: string) {
         case 'app': store.updateSite(val); break
         case 'storage': store.updateStorage(val); break
         case 'map': store.updateMap(val); break
+        case 'location': store.updateLocation(val); break
       }
     }
   })

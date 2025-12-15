@@ -6,6 +6,7 @@ export const useWizardStore = defineStore('wizard', () => {
   const site = useLocalStorage<Record<string, any>>('wizard-site', {})
   const storage = useLocalStorage<Record<string, any>>('wizard-storage', {})
   const map = useLocalStorage<Record<string, any>>('wizard-map', {})
+  const location = useLocalStorage<Record<string, any>>('wizard-location', {})
 
   const updateAdmin = (data: Record<string, any>) => {
     admin.value = { ...admin.value, ...data }
@@ -23,11 +24,16 @@ export const useWizardStore = defineStore('wizard', () => {
     map.value = { ...map.value, ...data }
   }
 
+  const updateLocation = (data: Record<string, any>) => {
+    location.value = { ...location.value, ...data }
+  }
+
   const clear = () => {
     admin.value = {}
     site.value = {}
     storage.value = {}
     map.value = {}
+    location.value = {}
   }
 
   return {
@@ -35,10 +41,12 @@ export const useWizardStore = defineStore('wizard', () => {
     site,
     storage,
     map,
+    location,
     updateAdmin,
     updateSite,
     updateStorage,
     updateMap,
+    updateLocation,
     clear,
   }
 })

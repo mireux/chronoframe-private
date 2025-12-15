@@ -934,11 +934,6 @@
           "label": "AMap Security Code",
           "description": "AMap security code (optional)",
           "help": "Used to enhance API call security, can be configured on AMap Open Platform"
-        },
-        "locationKey": {
-          "label": "AMap Web Service API Key",
-          "description": "AMap Web Service API Key (optional)",
-          "help": "Used for backend geocoding service, can be the same as JS API Key or separately applied"
         }
       }
     },
@@ -1023,7 +1018,11 @@
         },
         "forcePathStyle": {
           "label": "Force Path Style",
-          "description": "Use path-style URLs instead of virtual-hosted-style"
+          "description": "Use path-style URLs instead of virtual-hosted-style",
+          "options": {
+            "off": "Off",
+            "on": "On"
+          }
         },
         "maxKeys": {
           "label": "Max Keys",
@@ -1090,12 +1089,107 @@
         "enabled": {
           "label": "Encrypt Storage",
           "description": "Encrypt files before storing them in the configured provider",
-          "help": "When enabled, uploads and generated thumbnails are stored encrypted; the app will decrypt when serving to users"
+          "help": "When enabled, uploads and generated thumbnails are stored encrypted; the app will decrypt when serving to users",
+          "options": {
+            "off": "Off",
+            "on": "On"
+          }
         },
         "key": {
           "label": "Encryption Key",
           "description": "Key used to encrypt/decrypt stored files",
           "help": "Use a random 32-byte key (hex/base64) and keep it safe; changing it will make old encrypted files unreadable"
+        }
+      }
+    },
+    "oauth": {
+      "github": {
+        "enabled": {
+          "label": "Enable GitHub OAuth",
+          "description": "Allow users to sign in with GitHub",
+          "options": {
+            "off": "Off",
+            "on": "On"
+          }
+        },
+        "clientId": {
+          "label": "GitHub Client ID",
+          "description": "Client ID of your GitHub OAuth App"
+        },
+        "clientSecret": {
+          "label": "GitHub Client Secret",
+          "description": "Client secret of your GitHub OAuth App"
+        }
+      }
+    },
+    "analytics": {
+      "gtag": {
+        "id": {
+          "label": "Google Analytics ID",
+          "description": "Google Analytics tracking ID (e.g. G-XXXXXXX)"
+        }
+      },
+      "matomo": {
+        "enabled": {
+          "label": "Enable Matomo Analytics",
+          "description": "Enable Matomo website analytics tracking",
+          "options": {
+            "off": "Off",
+            "on": "On"
+          }
+        },
+        "url": {
+          "label": "Matomo URL",
+          "description": "Matomo server URL (e.g. https://matomo.example.com)"
+        },
+        "siteId": {
+          "label": "Matomo Site ID",
+          "description": "Site ID configured in Matomo"
+        }
+      }
+    },
+    "upload": {
+      "mime": {
+        "whitelistEnabled": {
+          "label": "Enable MIME Type Whitelist",
+          "description": "When enabled, only allow uploading files of specified types",
+          "options": {
+            "off": "Off",
+            "on": "On"
+          }
+        },
+        "whitelist": {
+          "label": "Allowed MIME Types",
+          "description": "Comma-separated list of allowed MIME types"
+        }
+      },
+      "duplicateCheck": {
+        "enabled": {
+          "label": "Enable Duplicate Check",
+          "description": "Automatically detect duplicate files during upload",
+          "options": {
+            "off": "Off",
+            "on": "On"
+          }
+        },
+        "mode": {
+          "label": "Duplicate Handling Mode",
+          "description": "How to handle detected duplicate files",
+          "options": {
+            "skip": "Skip",
+            "warn": "Warn & overwrite",
+            "block": "Block upload"
+          }
+        }
+      }
+    },
+    "security": {
+      "allowInsecureCookie": {
+        "label": "Allow Insecure Cookie",
+        "description": "For development only. Do not enable in production.",
+        "options": {
+          "off": "Off",
+          "on": "On"
         }
       }
     }
@@ -1120,6 +1214,22 @@
         "amap": {
           "label": "AMap (Gaode)",
           "description": "Map service optimized for China with Chinese address support."
+        }
+      }
+    },
+    "location": {
+      "provider": {
+        "mapbox": {
+          "label": "Mapbox",
+          "description": "Use Mapbox's geocoding service to convert coordinates to addresses."
+        },
+        "nominatim": {
+          "label": "Nominatim",
+          "description": "Free and open-source geocoding service by OpenStreetMap."
+        },
+        "amap": {
+          "label": "AMap (Gaode)",
+          "description": "Geocoding service optimized for China with accurate Chinese addresses."
         }
       }
     }

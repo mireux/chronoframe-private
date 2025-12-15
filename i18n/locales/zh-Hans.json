@@ -950,11 +950,6 @@
           "label": "高德地图安全密钥",
           "description": "高德地图安全密钥（可选）",
           "help": "用于提高 API 调用的安全性，可在高德开放平台配置"
-        },
-        "locationKey": {
-          "label": "高德 Web 服务 API Key",
-          "description": "高德 Web 服务 API Key（可选）",
-          "help": "用于后端地理编码服务，可与 JS API Key 相同或单独申请"
         }
       }
     },
@@ -1039,7 +1034,11 @@
         },
         "forcePathStyle": {
           "label": "强制路径风格",
-          "description": "使用路径风格 URL 而不是虚拟主机风格"
+          "description": "使用路径风格 URL 而不是虚拟主机风格",
+          "options": {
+            "off": "关闭",
+            "on": "开启"
+          }
         },
         "maxKeys": {
           "label": "最大密钥数",
@@ -1106,7 +1105,11 @@
         "enabled": {
           "label": "启用存储加密",
           "description": "上传的原文件与生成的缩略图将以加密形式存储在存储策略中",
-          "help": "开启后存储侧只保存密文；用户访问时由系统按需解密并呈现"
+          "help": "开启后存储侧只保存密文；用户访问时由系统按需解密并呈现",
+          "options": {
+            "off": "关闭",
+            "on": "开启"
+          }
         },
         "key": {
           "label": "加密密钥",
@@ -1119,7 +1122,11 @@
       "github": {
         "enabled": {
           "label": "启用 GitHub OAuth",
-          "description": "允许用户使用 GitHub 账号登录"
+          "description": "允许用户使用 GitHub 账号登录",
+          "options": {
+            "off": "关闭",
+            "on": "开启"
+          }
         },
         "clientId": {
           "label": "GitHub Client ID",
@@ -1141,7 +1148,11 @@
       "matomo": {
         "enabled": {
           "label": "启用 Matomo 分析",
-          "description": "启用 Matomo 网站分析统计"
+          "description": "启用 Matomo 网站分析统计",
+          "options": {
+            "off": "关闭",
+            "on": "开启"
+          }
         },
         "url": {
           "label": "Matomo 实例 URL",
@@ -1157,7 +1168,11 @@
       "mime": {
         "whitelistEnabled": {
           "label": "启用 MIME 类型白名单",
-          "description": "启用后只允许上传指定类型的文件"
+          "description": "启用后只允许上传指定类型的文件",
+          "options": {
+            "off": "关闭",
+            "on": "开启"
+          }
         },
         "whitelist": {
           "label": "允许的 MIME 类型",
@@ -1167,18 +1182,31 @@
       "duplicateCheck": {
         "enabled": {
           "label": "启用重复文件检测",
-          "description": "上传时自动检测重复文件"
+          "description": "上传时自动检测重复文件",
+          "options": {
+            "off": "关闭",
+            "on": "开启"
+          }
         },
         "mode": {
           "label": "重复文件处理模式",
-          "description": "检测到重复文件时的处理方式"
+          "description": "检测到重复文件时的处理方式",
+          "options": {
+            "skip": "跳过",
+            "warn": "警告并覆盖",
+            "block": "阻止上传"
+          }
         }
       }
     },
     "security": {
       "allowInsecureCookie": {
         "label": "允许不安全的 Cookie",
-        "description": "仅在开发环境使用，生产环境请勿启用"
+        "description": "仅在开发环境使用，生产环境请勿启用",
+        "options": {
+          "off": "不允许",
+          "on": "允许"
+        }
       }
     },
     "storage_provider": {
@@ -1208,6 +1236,22 @@
         "amap": {
           "label": "高德地图",
           "description": "适合中国地区使用的地图服务，支持中文地址解析。"
+        }
+      }
+    },
+    "location": {
+      "provider": {
+        "mapbox": {
+          "label": "Mapbox",
+          "description": "使用 Mapbox 的地理编码服务将坐标转换为地址。"
+        },
+        "nominatim": {
+          "label": "Nominatim",
+          "description": "OpenStreetMap 提供的免费开源地理编码服务。"
+        },
+        "amap": {
+          "label": "高德地图",
+          "description": "适合中国地区使用的地理编码服务，提供准确的中文地址。"
         }
       }
     }

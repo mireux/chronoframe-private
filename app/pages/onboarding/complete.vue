@@ -8,8 +8,57 @@ definePageMeta({
 const loading = ref(false)
 const store = useWizardStore()
 const toast = useToast()
+const router = useRouter()
+
+// 检查必需数据是否存在
+const isDataComplete = computed(() => {
+  const admin = unref(store.admin)
+  const site = unref(store.site)
+  const storage = unref(store.storage)
+  const map = unref(store.map)
+
+  console.log('Checking data completeness:', {
+    admin,
+    site,
+    storage,
+    map
+  })
+
+  return !!(
+    admin?.email && 
+    admin?.password && 
+    site?.title && 
+    storage?.name && 
+    storage?.provider &&
+    map?.provider
+  )
+})
+
+// 页面加载时检查数据
+onMounted(() => {
+  if (!isDataComplete.value) {
+    console.warn('向导数据不完整，重定向到第一步')
+    toast.add({
+      title: '数据不完整',
+      description: '请从头开始完成向导设置',
+      color: 'warning',
+    })
+    router.push('/onboarding')
+  }
+})
 
 async function onComplete() {
+  // 再次检查数据完整性
+  if (!isDataComplete.value) {
+    toast.add({
+      title: '数据不完整',
+      description: '请确保完成所有必需步骤',
+      color: 'error',
+    })
+    router.push('/onboarding')
+    return
+  }
+
   loading.value = true
   try {
     // 1. Prepare Admin Data
@@ -47,7 +96,6 @@ async function onComplete() {
     if (mapProvider === 'amap') {
       mapData.token = mapState['amap.key']
       mapData.securityCode = mapState['amap.securityCode']
-      mapData.locationKey = mapState['amap.locationKey']
     } else {
       const mapTokenKey = `${mapProvider}.token`
       const mapStyleKey = `${mapProvider}.style`
@@ -55,15 +103,34 @@ async function onComplete() {
       mapData.style = mapState[mapStyleKey]
     }
 
-    // 5. Submit All
+    // 5. Prepare Location Data
+    const locationState = { ...unref(store.location) }
+    const locationProvider = locationState.provider
+    
+    const locationData: Record<string, any> | undefined = locationProvider ? {
+      provider: locationProvider,
+    } : undefined
+
+    if (locationData) {
+      if (locationProvider === 'mapbox') {
+        locationData.token = locationState['mapbox.token']
+      } else if (locationProvider === 'nominatim') {
+        locationData.baseUrl = locationState['nominatim.baseUrl']
+      } else if (locationProvider === 'amap') {
+        locationData.token = locationState['amap.key']
+      }
+    }
+
+    // 6. Submit All
     const submitData = {
       admin: adminData,
       site: siteData,
       storage: storageData,
       map: mapData,
+      location: locationData,
     }
 
-    console.log('Submitting wizard data:', JSON.stringify(submitData, null, 2))
+    console.log('提交向导数据:', JSON.stringify(submitData, null, 2))
 
     await $fetch('/api/wizard/submit', {
       method: 'POST',
@@ -73,13 +140,35 @@ async function onComplete() {
     // Clear store
     store.clear()
 
-    // Force reload to apply settings
-    window.location.href = '/dashboard'
-  } catch (error: any) {
-    console.error(error)
     toast.add({
-      title: 'Setup Failed',
-      description: error.data?.message || 'Failed to complete setup',
+      title: '设置完成',
+      description: '正在跳转到仪表盘...',
+      color: 'success',
+    })
+
+    // Force reload to apply settings
+    setTimeout(() => {
+      window.location.href = '/dashboard'
+    }, 500)
+  } catch (error: any) {
+    console.error('提交向导失败:', error)
+    
+    let errorMessage = '提交失败，请重试'
+    
+    // 解析 Zod 验证错误
+    if (error.data?.data) {
+      const errors = error.data.data
+      if (Array.isArray(errors) && errors.length > 0) {
+        const missingFields = errors.map(e => e.path?.join('.') || '未知字段').join(', ')
+        errorMessage = `以下字段缺失或无效: ${missingFields}`
+      }
+    } else if (error.data?.message) {
+      errorMessage = error.data.message
+    }
+    
+    toast.add({
+      title: '设置失败',
+      description: errorMessage,
       color: 'error',
     })
   } finally {

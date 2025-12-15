@@ -346,7 +346,11 @@
         "enabled": {
           "label": "Encrypt Storage",
           "description": "Encrypt files before storing them in the configured provider",
-          "help": "When enabled, uploads and generated thumbnails are stored encrypted; the app will decrypt when serving to users"
+          "help": "When enabled, uploads and generated thumbnails are stored encrypted; the app will decrypt when serving to users",
+          "options": {
+            "off": "Off",
+            "on": "On"
+          }
         },
         "key": {
           "label": "Encryption Key",
@@ -1043,6 +1047,26 @@
         "maplibre": {
           "label": "MapLibre",
           "description": "Mapbox GL JS 的開源分支。"
+        },
+        "amap": {
+          "label": "高德地圖",
+          "description": "適合中國地區使用的地圖服務，支援中文地址解析。"
+        }
+      }
+    },
+    "location": {
+      "provider": {
+        "mapbox": {
+          "label": "Mapbox",
+          "description": "使用 Mapbox 的地理編碼服務將坐標轉換為地址。"
+        },
+        "nominatim": {
+          "label": "Nominatim",
+          "description": "OpenStreetMap 提供的免費開源地理編碼服務。"
+        },
+        "amap": {
+          "label": "高德地圖",
+          "description": "適合中國地區使用的地理編碼服務，提供準確的中文地址。"
         }
       }
     }
