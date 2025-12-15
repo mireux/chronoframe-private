@@ -36,12 +36,19 @@ export default nitroPlugin(async (nitroApp) => {
     }
   }
   
-  if (!activeProvider) {
-    logger.storage.error('No active storage provider configured.')
-    return
-  }
+  let storageConfiguration: StorageConfig
 
-  const storageConfiguration = activeProvider.config
+  if (!activeProvider) {
+    logger.storage.warn('No active storage provider configured, using default local storage')
+    storageConfiguration = {
+      provider: 'local',
+      basePath: path.resolve(process.cwd(), './data/storage'),
+      baseUrl: '/storage',
+      prefix: 'photos/',
+    } as LocalStorageConfig
+  } else {
+    storageConfiguration = activeProvider.config
+  }
 
   const storageManager = new StorageManager(
     storageConfiguration,
