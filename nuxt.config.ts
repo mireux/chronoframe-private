@@ -243,9 +243,6 @@ export default defineNuxtConfig({
   i18n: {
     langDir: 'locales',
     lazy: true,
-    experimental: {
-      localeDetector: 'localeDetector.ts',
-    },
     detectBrowserLanguage: {
       fallbackLocale: 'en',
       useCookie: false,
