@@ -384,7 +384,7 @@ const uploadImage = async (file: File, existingFileId?: string) => {
           })
 
           if (resp.success && resp.results.length > 0) {
-            const processingTaskResult = resp.results[resp.results.length - 1]
+            const processingTaskResult = resp.results[resp.results.length - 1] as { taskId: number }
             uploadingFile.taskId = processingTaskResult.taskId
             uploadingFile.status = 'processing'
             uploadingFiles.value = new Map(uploadingFiles.value)
@@ -745,7 +745,7 @@ const startTaskStatusCheck = (taskId: number, fileId: string) => {
         statusIntervals.value.delete(taskId)
 
         // 记录完成的照片ID
-        const photoId = response.result?.photoId
+        const photoId = (response as any).result?.photoId
         if (photoId && !currentBatchPhotoIds.value.includes(photoId)) {
           currentBatchPhotoIds.value.push(photoId)
         }
@@ -3066,7 +3066,7 @@ onUnmounted(() => {
                   <UCheckbox
                     :model-value="selectedAlbumIds.includes(album.id)"
                     @update:model-value="
-                      (value) => {
+                      (value: boolean) => {
                         const index = selectedAlbumIds.indexOf(album.id)
                         if (value && index === -1) {
                           selectedAlbumIds.push(album.id)

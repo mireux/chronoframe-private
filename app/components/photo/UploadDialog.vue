@@ -224,7 +224,7 @@ const startTaskStatusCheck = (taskId: number, fileId: string) => {
         statusIntervals.value.delete(taskId)
 
         // 记录完成的照片ID（从文件名推断）
-        const photoId = response.result?.photoId
+        const photoId = (response as any).result?.photoId
         if (photoId) {
           completedPhotoIds.value.push(photoId)
         }
@@ -514,16 +514,18 @@ const getFileNameClass = (file: File): string => {
   return 'text-neutral-700 dark:text-neutral-100'
 }
 
-const getStatusColor = (status?: string): string => {
+const getStatusColor = (
+  status?: UploadingFile['status'],
+): 'error' | 'success' | 'primary' | 'secondary' | 'info' | 'warning' | 'neutral' | undefined => {
   switch (status) {
     case 'completed':
-      return 'green'
+      return 'success'
     case 'error':
-      return 'red'
+      return 'error'
     case 'uploading':
       return 'primary'
     case 'processing':
-      return 'yellow'
+      return 'info'
     case 'preparing':
       return 'neutral'
     case 'skipped':
@@ -982,7 +984,7 @@ onUnmounted(() => {
                   <UButton
                     v-if="getUploadingFile(file)?.canAbort"
                     variant="ghost"
-                    color="red"
+                    color="error"
                     size="xs"
                     icon="tabler:x"
                     @click="getUploadingFile(file)?.abortUpload?.()"

@@ -36,7 +36,14 @@ export function usePhotoFilters() {
   const activeFilters = globalFilters
 
   // 获取相册数据
-  const { data: albums } = useFetch<Array<{ id: number; title: string; photoIds: string[] }>>('/api/albums')
+  const { data: albums } = useFetch<
+    Array<{
+      id: number
+      title: string
+      photoIds: string[]
+      isHidden?: boolean | number
+    }>
+  >('/api/albums')
 
   // 建立照片到相册的映射关系
   const photoToAlbumsMap = computed(() => {
