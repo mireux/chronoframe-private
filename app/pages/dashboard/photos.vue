@@ -34,7 +34,8 @@ useHead({
   title: $t('title.photos'),
 })
 
-const MAX_FILE_SIZE = 256 // in MB
+const maxFileSizeMb = useSettingRef('storage:upload.maxSizeMb')
+const MAX_FILE_SIZE = computed(() => (maxFileSizeMb.value as number) || 256)
 
 const route = useRoute()
 const dayjs = useDayjs()
@@ -477,6 +478,7 @@ interface DuplicateCheckResult {
 
 const checkingDuplicates = ref(false)
 const duplicateCheckResults = ref<Map<string, DuplicateCheckResult>>(new Map())
+const filteringSelectedFiles = ref(false)
 
 const hasSelectedFiles = computed(() => selectedFiles.value.length > 0)
 
@@ -570,8 +572,34 @@ const clearSelectedFiles = () => {
 watch(
   selectedFiles,
   async (newFiles, oldFiles) => {
+    if (filteringSelectedFiles.value) return
+
     // 只有当文件数量变化或文件内容变化时才触发检查
     if (newFiles.length > 0) {
+      const maxSize = (MAX_FILE_SIZE.value as number) * 1024 * 1024
+      const oversizedFiles = newFiles.filter((file) => file.size > maxSize)
+
+      if (oversizedFiles.length > 0) {
+        const filteredFiles = newFiles.filter((file) => file.size <= maxSize)
+        filteringSelectedFiles.value = true
+        selectedFiles.value = filteredFiles
+        await nextTick()
+        filteringSelectedFiles.value = false
+
+        toast.add({
+          title: '已跳过过大文件',
+          description: `跳过了 ${oversizedFiles.length} 个超过 ${MAX_FILE_SIZE.value}MB 的文件`,
+          color: 'warning',
+        })
+
+        if (filteredFiles.length > 0) {
+          await checkDuplicateFiles(filteredFiles)
+        } else {
+          duplicateCheckResults.value.clear()
+        }
+        return
+      }
+
       // 检查是否真的有变化
       const hasChanged =
         !oldFiles ||
@@ -1293,13 +1321,13 @@ const validateFile = (file: File): { valid: boolean; error?: string } => {
     }
   }
 
-  const maxSize = MAX_FILE_SIZE * 1024 * 1024
+  const maxSize = (MAX_FILE_SIZE.value as number) * 1024 * 1024
   if (file.size > maxSize) {
     return {
       valid: false,
       error: $t('dashboard.photos.errors.fileTooLarge', {
         size: (file.size / 1024 / 1024).toFixed(2),
-        maxSize: MAX_FILE_SIZE,
+        maxSize: MAX_FILE_SIZE.value as number,
       }),
     }
   }
@@ -1322,6 +1350,8 @@ const handleUpload = async () => {
     const fileIdMapping = new Map<File, string>()
     const skippedFiles: string[] = []
     const skippedPhotoIds: string[] = []
+    const oversizedFiles: string[] = []
+    const maxSize = (MAX_FILE_SIZE.value as number) * 1024 * 1024
 
     for (const file of fileList) {
       const duplicateResult = duplicateCheckResults.value.get(file.name)
@@ -1330,6 +1360,11 @@ const handleUpload = async () => {
         if (duplicateResult.photoId) {
           skippedPhotoIds.push(duplicateResult.photoId)
         }
+        continue
+      }
+
+      if (file.size > maxSize) {
+        oversizedFiles.push(file.name)
         continue
       }
 
@@ -1348,6 +1383,14 @@ const handleUpload = async () => {
         title: '已跳过重复文件',
         description: `跳过了 ${skippedFiles.length} 个已存在的文件${selectedAlbumId.value ? '，但会添加到目标相册' : ''}`,
         color: 'info',
+      })
+    }
+
+    if (oversizedFiles.length > 0) {
+      toast.add({
+        title: '已跳过过大文件',
+        description: `跳过了 ${oversizedFiles.length} 个超过 ${MAX_FILE_SIZE.value}MB 的文件`,
+        color: 'warning',
       })
     }
 
@@ -1379,10 +1422,10 @@ const handleUpload = async () => {
         return
       }
 
-      if (skippedFiles.length > 0) {
+      if (skippedFiles.length > 0 || oversizedFiles.length > 0) {
         toast.add({
           title: '没有需要上传的文件',
-          description: '所有文件都已存在',
+          description: '所有文件都已存在或超过大小限制',
           color: 'warning',
         })
       } else {
