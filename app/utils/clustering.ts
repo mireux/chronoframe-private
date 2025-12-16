@@ -1,12 +1,6 @@
 import type { PhotoMarker, ClusterPoint } from '~~/shared/types/map'
 import { transformCoordinate } from './coordinate-transform'
 
-/**
- * Simple clustering algorithm for small datasets
- * @param markers Array of photo markers to cluster
- * @param zoom Current zoom level
- * @returns Array of cluster points
- */
 export function clusterMarkers(
   markers: PhotoMarker[],
   zoom: number,
@@ -25,34 +19,74 @@ export function clusterMarkers(
     }))
   }
 
-  const clusters: ClusterPoint[] = []
-  const processed = new Set<string>()
-
   const threshold = Math.max(0.001, 0.01 / Math.pow(2, zoom - 10))
+  const cellSize = threshold
+
+  type WorkingCluster = {
+    markers: PhotoMarker[]
+    centerLng: number
+    centerLat: number
+  }
+
+  const workingClusters: WorkingCluster[] = []
+  const grid = new Map<string, WorkingCluster[]>()
+  const neighborOffsets = [-1, 0, 1]
+
+  const getCellKey = (lng: number, lat: number) => {
+    const x = Math.floor(lng / cellSize)
+    const y = Math.floor(lat / cellSize)
+    return `${x}:${y}`
+  }
 
   for (const marker of markers) {
-    if (processed.has(marker.id)) continue
+    const x = Math.floor(marker.longitude / cellSize)
+    const y = Math.floor(marker.latitude / cellSize)
 
-    const nearby = [marker]
-    processed.add(marker.id)
+    let target: WorkingCluster | undefined
+    let bestDistance = Number.POSITIVE_INFINITY
 
-    // Find nearby markers
-    for (const other of markers) {
-      if (processed.has(other.id)) continue
+    for (const dx of neighborOffsets) {
+      for (const dy of neighborOffsets) {
+        const bucket = grid.get(`${x + dx}:${y + dy}`)
+        if (!bucket) continue
 
-      const distance = Math.sqrt(
-        Math.pow(marker.longitude - other.longitude, 2) +
-          Math.pow(marker.latitude - other.latitude, 2),
-      )
-
-      if (distance < threshold) {
-        nearby.push(other)
-        processed.add(other.id)
+        for (const cluster of bucket) {
+          const distance = Math.hypot(
+            marker.longitude - cluster.centerLng,
+            marker.latitude - cluster.centerLat,
+          )
+          if (distance < threshold && distance < bestDistance) {
+            bestDistance = distance
+            target = cluster
+          }
+        }
       }
     }
 
-    if (nearby.length === 1) {
-      // Single marker
+    if (!target) {
+      target = {
+        markers: [marker],
+        centerLng: marker.longitude,
+        centerLat: marker.latitude,
+      }
+      workingClusters.push(target)
+      const key = getCellKey(marker.longitude, marker.latitude)
+      const bucket = grid.get(key)
+      if (bucket) bucket.push(target)
+      else grid.set(key, [target])
+      continue
+    }
+
+    target.markers.push(marker)
+    const count = target.markers.length
+    target.centerLng += (marker.longitude - target.centerLng) / count
+    target.centerLat += (marker.latitude - target.centerLat) / count
+  }
+
+  const clusters: ClusterPoint[] = []
+  for (const c of workingClusters) {
+    if (c.markers.length === 1) {
+      const marker = c.markers[0]
       clusters.push({
         type: 'Feature',
         properties: { marker },
@@ -61,28 +95,23 @@ export function clusterMarkers(
           coordinates: [marker.longitude, marker.latitude],
         },
       })
-    } else {
-      // Cluster
-      const centerLng =
-        nearby.reduce((sum, m) => sum + m.longitude, 0) / nearby.length
-      const centerLat =
-        nearby.reduce((sum, m) => sum + m.latitude, 0) / nearby.length
-
-      clusters.push({
-        type: 'Feature',
-        properties: {
-          cluster: true,
-          point_count: nearby.length,
-          point_count_abbreviated: nearby.length.toString(),
-          marker: nearby[0], // Representative marker for the cluster
-          clusteredPhotos: nearby, // All photos in the cluster
-        },
-        geometry: {
-          type: 'Point',
-          coordinates: [centerLng, centerLat],
-        },
-      })
+      continue
     }
+
+    clusters.push({
+      type: 'Feature',
+      properties: {
+        cluster: true,
+        point_count: c.markers.length,
+        point_count_abbreviated: c.markers.length.toString(),
+        marker: c.markers[0],
+        clusteredPhotos: c.markers,
+      },
+      geometry: {
+        type: 'Point',
+        coordinates: [c.centerLng, c.centerLat],
+      },
+    })
   }
 
   return clusters

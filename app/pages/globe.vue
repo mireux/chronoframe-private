@@ -25,6 +25,7 @@ const photosWithLocation = computed(() => {
 const currentClusterPointId = ref<string | null>(null)
 const mapInstance = ref<any>(null)
 const currentZoom = ref<number>(4)
+const mapId = `globe-${Math.random().toString(36).slice(2)}`
 
 const mapConfig = computed(() => {
   const config = getSetting('map')
@@ -249,10 +250,6 @@ const resetMap = () => {
   }
 }
 
-const generateRandomKey = () => {
-  return Math.random().toString(36).substring(2, 15)
-}
-
 onBeforeRouteLeave(() => {
   if (mapInstance.value) {
     if (provider.value === 'amap') {
@@ -303,7 +300,7 @@ onBeforeRouteLeave(() => {
       <ClientOnly>
         <MapProvider
           class="w-full h-full"
-          :map-id="generateRandomKey()"
+          :map-id="mapId"
           :zoom="mapViewState.zoom"
           :center="[mapViewState.longitude, mapViewState.latitude]"
           :attribution-control="false"
@@ -317,7 +314,6 @@ onBeforeRouteLeave(() => {
               v-for="clusterPoint in clusterGroups"
               :key="`cluster-${clusterPoint.properties.marker?.id}`"
               :cluster-point="clusterPoint"
-              :marker-id="generateRandomKey()"
               @click="onMarkerPinClick"
               @close="onMarkerPinClose"
             />
@@ -332,7 +328,6 @@ onBeforeRouteLeave(() => {
               :is-selected="
                 clusterPoint.properties.marker?.id === currentClusterPointId
               "
-              :marker-id="generateRandomKey()"
               @click="onMarkerPinClick"
               @close="onMarkerPinClose"
             />

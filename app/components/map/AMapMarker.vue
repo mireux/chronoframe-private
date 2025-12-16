@@ -14,68 +14,79 @@ const props = withDefaults(
   },
 )
 
-const markerContent = ref<HTMLDivElement>()
-const markerInstance = ref<any>()
+const markerInstance = shallowRef<any>()
+const markerMap = shallowRef<AMapMap | undefined>()
+const markerContainer = shallowRef<HTMLDivElement | null>(null)
 
 const injectedMap = inject<Ref<AMapMap | undefined>>('amap', ref(undefined))
 const mapToUse = computed(() => props.map || injectedMap.value)
 
-const createMarker = () => {
-  if (!mapToUse.value || !props.lnglat || !markerContent.value) {
-    return
+const removeMarker = () => {
+  if (markerInstance.value && markerMap.value) {
+    markerMap.value.remove(markerInstance.value)
   }
+  markerInstance.value = null
+  markerMap.value = undefined
+  markerContainer.value = null
+}
 
-  if (markerInstance.value) {
-    mapToUse.value.remove(markerInstance.value)
-  }
+const createMarker = (map: AMapMap, lnglat: [number, number]) => {
+  if (!window.AMap?.Marker || !window.AMap?.Pixel) return
 
-  // Clone the content element to avoid display:none issues
-  const content = markerContent.value.cloneNode(true) as HTMLElement
-  content.style.display = 'block'
+  removeMarker()
 
+  const container = document.createElement('div')
+  if (props.markerId) container.dataset.markerId = props.markerId
+
+  markerContainer.value = container
+  markerMap.value = map
   markerInstance.value = new window.AMap.Marker({
-    position: props.lnglat,
-    content: content,
+    position: lnglat,
+    content: container,
     offset: new window.AMap.Pixel(-20, -20),
   })
 
-  mapToUse.value.add(markerInstance.value)
+  map.add(markerInstance.value)
 }
 
 watch(
-  () => [mapToUse.value, props.lnglat, markerContent.value],
-  () => {
-    nextTick(() => {
-      createMarker()
-    })
+  () => [mapToUse.value, props.lnglat] as const,
+  ([map, lnglat], previous) => {
+    const prevMap = previous?.[0]
+    const prevLnglat = previous?.[1]
+    if (!map || !lnglat) {
+      removeMarker()
+      return
+    }
+
+    if (!markerInstance.value || map !== prevMap || !prevLnglat) {
+      nextTick(() => createMarker(map, lnglat))
+      return
+    }
+
+    markerInstance.value.setPosition(lnglat)
   },
   { immediate: true },
 )
 
-watch(
-  () => props.lnglat,
-  (newLnglat) => {
-    if (markerInstance.value && newLnglat) {
-      markerInstance.value.setPosition(newLnglat)
-    }
-  },
-)
+watch(() => props.markerId, (newMarkerId) => {
+  if (!markerContainer.value) return
+  if (newMarkerId) markerContainer.value.dataset.markerId = newMarkerId
+  else delete markerContainer.value.dataset.markerId
+})
 
 onBeforeUnmount(() => {
-  if (markerInstance.value && mapToUse.value) {
-    mapToUse.value.remove(markerInstance.value)
-    markerInstance.value = null
-  }
+  removeMarker()
 })
 </script>
 
 <template>
-  <div
-    ref="markerContent"
-    style="display: none"
+  <Teleport
+    v-if="markerContainer"
+    :to="markerContainer"
   >
     <slot name="marker" />
-  </div>
+  </Teleport>
 </template>
 
 <style scoped></style>
