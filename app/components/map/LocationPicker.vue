@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { onBeforeUnmount, ref, watch } from 'vue'
 import type { MapInstance } from '~~/shared/types/map'
+import { gcj02ToWgs84, transformCoordinate } from '~/utils/coordinate-transform'
 
 const props = withDefaults(
   defineProps<{
@@ -24,18 +25,38 @@ const mapInstance = ref<MapInstance | null>(null)
 const markerCoordinates = ref<[number, number] | null>(null)
 const { locale } = useI18n()
 
+const mapConfig = computed(() => {
+  const config = getSetting('map')
+  return typeof config === 'object' && config ? config : {}
+})
+
+const provider = computed(() => mapConfig.value.provider || 'maplibre')
+
 let clickHandler: ((event: any) => void) | null = null
 
 const syncFromProps = (value: { latitude: number; longitude: number } | null) => {
   if (value) {
-    markerCoordinates.value = [value.longitude, value.latitude]
+    const [lng, lat] = transformCoordinate(
+      value.longitude,
+      value.latitude,
+      provider.value,
+    )
+    markerCoordinates.value = [lng, lat]
     if (mapInstance.value) {
       const map: any = mapInstance.value
-      map.flyTo?.({
-        center: markerCoordinates.value,
-        zoom: Math.max(props.zoom ?? 4, 4),
-        essential: true,
-      })
+      const zoom = Math.max(props.zoom ?? 4, 4)
+      if (typeof map.setZoomAndCenter === 'function') {
+        map.setZoomAndCenter(zoom, markerCoordinates.value, true, 0)
+      } else if (typeof map.flyTo === 'function') {
+        map.flyTo?.({
+          center: markerCoordinates.value,
+          zoom,
+          essential: true,
+        })
+      } else {
+        map.setCenter?.(markerCoordinates.value)
+        map.setZoom?.(zoom)
+      }
     }
   } else {
     markerCoordinates.value = null
@@ -56,24 +77,43 @@ const updateValue = (
   shouldEmitPick = true,
 ) => {
   markerCoordinates.value = [longitude, latitude]
-  emit('update:modelValue', { latitude, longitude })
+
+  let wgsLatitude = latitude
+  let wgsLongitude = longitude
+  if (provider.value === 'amap') {
+    const [lng, lat] = gcj02ToWgs84(longitude, latitude)
+    wgsLatitude = lat
+    wgsLongitude = lng
+  }
+
+  emit('update:modelValue', { latitude: wgsLatitude, longitude: wgsLongitude })
   if (shouldEmitPick) {
-    emit('pick', { latitude, longitude })
+    emit('pick', { latitude: wgsLatitude, longitude: wgsLongitude })
   }
 }
 
 const handleMapClick = (event: any) => {
   const point =
     event?.lngLat ||
+    event?.lnglat ||
     event?.latlng ||
     (Array.isArray(event) ? { lng: event[0], lat: event[1] } : null)
   if (!point) {
     return
   }
+
   const latitude =
-    typeof point.lat === 'number' ? point.lat : point.latitude ?? point[1]
+    typeof point.lat === 'number'
+      ? point.lat
+      : typeof point.getLat === 'function'
+        ? point.getLat()
+        : point.latitude ?? point[1]
   const longitude =
-    typeof point.lng === 'number' ? point.lng : point.longitude ?? point[0]
+    typeof point.lng === 'number'
+      ? point.lng
+      : typeof point.getLng === 'function'
+        ? point.getLng()
+        : point.longitude ?? point[0]
   if (typeof latitude !== 'number' || typeof longitude !== 'number') {
     return
   }

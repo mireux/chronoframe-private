@@ -43,6 +43,13 @@ const currentPhoto = computed(() =>
   displayPhotos.value.find((photo) => photo.id === photoId.value),
 )
 
+const returnRouteFromQuery = computed(() => {
+  const from = route.query.from
+  if (typeof from !== 'string') return null
+  if (!from.startsWith('/')) return null
+  return from
+})
+
 defineOgImageComponent('Photo', {
   headline: currentPhoto.value ? 'PHOTO' : 'ChronoFrame',
   title: currentPhoto.value?.title || getSetting('app:title'),
@@ -116,7 +123,7 @@ watch(
               })
             } else {
               // 直接访问照片详情页，不设置相册上下文
-              openViewer(foundIndex, null)
+              openViewer(foundIndex, returnRouteFromQuery.value)
             }
 
             nextTick(() => {

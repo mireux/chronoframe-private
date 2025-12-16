@@ -22,6 +22,20 @@ const emit = defineEmits<{
 }>()
 
 const dayjs = useDayjs()
+const route = useRoute()
+const mapConfig = computed(() => {
+  const config = getSetting('map')
+  return typeof config === 'object' && config ? config : {}
+})
+
+const provider = computed(() => mapConfig.value.provider || 'maplibre')
+
+const photoLink = (id: string) => {
+  return {
+    path: `/${id}`,
+    query: { from: route.fullPath },
+  }
+}
 
 const onClick = () => {
   emit('click', props.clusterPoint)
@@ -74,6 +88,7 @@ const sizeDelta = computed(() => {
             <!-- Background image -->
             <div class="absolute inset-0 overflow-hidden rounded-full">
               <ThumbImage
+                v-if="provider !== 'amap'"
                 :src="representativePhoto.thumbnailUrl!"
                 :alt="
                   representativePhoto.title || `聚类 ${representativePhoto.id}`
@@ -165,7 +180,7 @@ const sizeDelta = computed(() => {
                     >
                       <NuxtLink
                         class="block w-full h-full"
-                        :to="`/${photo.id}`"
+                        :to="photoLink(photo.id)"
                       >
                         <ThumbImage
                           :src="photo.thumbnailUrl!"

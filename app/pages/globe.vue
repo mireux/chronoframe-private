@@ -10,7 +10,7 @@ useHead({
 const route = useRoute()
 const router = useRouter()
 
-const { photos } = usePhotos()
+const { photos, status } = usePhotos()
 
 const photosWithLocation = computed(() => {
   return photos.value.filter(
@@ -39,6 +39,9 @@ const mapConfig = computed(() => {
 })
 
 const provider = computed(() => mapConfig.value.provider || 'maplibre')
+const isPhotosLoaded = computed(() => {
+  return status.value !== 'pending' || photos.value.length > 0
+})
 
 const allMarkers = computed(() => {
   return photosToMarkers(photosWithLocation.value, provider.value)
@@ -364,6 +367,7 @@ onBeforeRouteLeave(() => {
     >
       <ClientOnly>
         <MapProvider
+          v-if="isPhotosLoaded"
           class="w-full h-full"
           :map-id="mapId"
           :zoom="mapViewState.zoom"
@@ -398,6 +402,14 @@ onBeforeRouteLeave(() => {
             />
           </template>
         </MapProvider>
+        <template v-else>
+          <div class="w-full h-full flex items-center justify-center">
+            <Icon
+              name="tabler:map-pin-off"
+              class="size-10 text-gray-500 animate-pulse"
+            />
+          </div>
+        </template>
 
         <template #fallback>
           <div class="w-full h-full flex items-center justify-center">
