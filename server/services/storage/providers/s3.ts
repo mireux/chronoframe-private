@@ -1,3 +1,4 @@
+import type { Readable } from 'node:stream'
 import type { _Object, S3ClientConfig } from '@aws-sdk/client-s3'
 import {
   DeleteObjectCommand,
@@ -275,6 +276,38 @@ export class S3StorageProvider implements StorageProvider {
         return null
       }
       this.logger?.error(`Failed to get metadata for key: ${key}`, error)
+      throw error
+    }
+  }
+
+  async createFromStream(
+    key: string,
+    stream: Readable,
+    contentLength: number | null,
+    contentType?: string,
+  ): Promise<StorageObject> {
+    try {
+      const absoluteKey = combinePrefixAndKey(this.config.prefix, key)
+      const cmd = new PutObjectCommand({
+        Bucket: this.config.bucket,
+        Key: absoluteKey,
+        Body: stream,
+        ContentType: contentType || 'application/octet-stream',
+        ContentLength: contentLength ?? undefined,
+      })
+
+      const resp = await this.client.send(cmd)
+
+      this.logger?.success(`Created object with key: ${absoluteKey}`)
+
+      return {
+        key: absoluteKey,
+        size: contentLength ?? undefined,
+        lastModified: new Date(),
+        etag: resp.ETag,
+      }
+    } catch (error) {
+      this.logger?.error(`Failed to create object with key: ${key}`, error)
       throw error
     }
   }

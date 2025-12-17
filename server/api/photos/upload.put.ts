@@ -1,3 +1,4 @@
+import { Transform } from 'node:stream'
 import { useStorageProvider } from '~~/server/utils/useStorageProvider'
 import { logger } from '~~/server/utils/logger'
 import { settingsManager } from '~~/server/services/settings/settingsManager'
@@ -62,25 +63,18 @@ export default eventHandler(async (event) => {
     }
   }
   
-  // 使用流式处理而不是一次性读取整个文件到内存
-  const raw = await readRawBody(event, false)
-  if (!raw || !(raw instanceof Buffer)) {
-    throw createError({
-      statusCode: 400,
-      statusMessage: t('upload.error.uploadFailed.title'),
-      data: {
-        title: t('upload.error.uploadFailed.title'),
-        message: t('upload.error.uploadFailed.message'),
-      },
-    })
-  }
-  
   const maxSizeMb =
     (await settingsManager.get<number>('storage', 'upload.maxSizeMb', 512)) ??
     512
   const maxBytes = maxSizeMb * 1024 * 1024
-  if (raw.byteLength > maxBytes) {
-    const sizeInMB = (raw.byteLength / 1024 / 1024).toFixed(2)
+
+  const contentLengthHeader = getHeader(event, 'content-length')
+  const parsedLength = contentLengthHeader ? Number(contentLengthHeader) : NaN
+  const contentLength =
+    Number.isFinite(parsedLength) && parsedLength >= 0 ? parsedLength : null
+
+  if (contentLength !== null && contentLength > maxBytes) {
+    const sizeInMB = (contentLength / 1024 / 1024).toFixed(2)
     throw createError({
       statusCode: 413,
       statusMessage: t('upload.error.tooLarge.title'),
@@ -93,12 +87,89 @@ export default eventHandler(async (event) => {
   }
 
   try {
-    logger.chrono.info(`[upload] Starting file upload: ${normalizedKey}, size: ${raw.byteLength}`)
-    const result = await storageProvider.create(normalizedKey, raw, contentType, true)
-    logger.chrono.success(`[upload] File uploaded successfully: ${normalizedKey}, stored key: ${result.key}`)
+    let bytesReceived = 0
+    const limiter = new Transform({
+      transform(chunk, _encoding, callback) {
+        const buf = Buffer.isBuffer(chunk)
+          ? chunk
+          : chunk instanceof Uint8Array
+            ? Buffer.from(chunk)
+            : null
 
-    const fileMeta = await storageProvider.getFileMeta(normalizedKey)
-    logger.chrono.info(`[upload] File verification: ${normalizedKey}, exists: ${!!fileMeta}`)
+        if (!buf) {
+          callback(new Error('Invalid upload payload'))
+          return
+        }
+
+        bytesReceived += buf.length
+        if (bytesReceived > maxBytes) {
+          callback(
+            createError({
+              statusCode: 413,
+              statusMessage: t('upload.error.tooLarge.title'),
+              data: {
+                title: t('upload.error.tooLarge.title'),
+                message: t('upload.error.tooLarge.message', {
+                  size: (bytesReceived / 1024 / 1024).toFixed(2),
+                }),
+                suggestion: t('upload.error.tooLarge.suggestion', {
+                  maxSize: maxSizeMb,
+                }),
+              },
+            }),
+          )
+          return
+        }
+
+        callback(null, buf)
+      },
+    })
+
+    logger.chrono.info(
+      `[upload] Starting file upload: ${normalizedKey}, declared size: ${contentLength ?? 'unknown'}`,
+    )
+
+    const result = storageProvider.createFromStream
+      ? await storageProvider.createFromStream(
+          normalizedKey,
+          event.node.req.pipe(limiter),
+          contentLength,
+          contentType,
+        )
+      : await (async () => {
+          const raw = await readRawBody(event, false)
+          if (!raw || !(raw instanceof Buffer)) {
+            throw createError({
+              statusCode: 400,
+              statusMessage: t('upload.error.uploadFailed.title'),
+              data: {
+                title: t('upload.error.uploadFailed.title'),
+                message: t('upload.error.uploadFailed.message'),
+              },
+            })
+          }
+
+          if (raw.byteLength > maxBytes) {
+            const sizeInMB = (raw.byteLength / 1024 / 1024).toFixed(2)
+            throw createError({
+              statusCode: 413,
+              statusMessage: t('upload.error.tooLarge.title'),
+              data: {
+                title: t('upload.error.tooLarge.title'),
+                message: t('upload.error.tooLarge.message', { size: sizeInMB }),
+                suggestion: t('upload.error.tooLarge.suggestion', {
+                  maxSize: maxSizeMb,
+                }),
+              },
+            })
+          }
+
+          return await storageProvider.create(normalizedKey, raw, contentType)
+        })()
+
+    logger.chrono.success(
+      `[upload] File uploaded successfully: ${normalizedKey}, stored key: ${result.key}`,
+    )
   } catch (error) {
     logger.chrono.error('Storage provider create error:', error)
     throw createError({
@@ -111,6 +182,6 @@ export default eventHandler(async (event) => {
     })
   }
 
-  return { ok: true, key, needsEncryption: true }
+  return { ok: true, key, needsEncryption: false }
 })
 

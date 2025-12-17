@@ -1,12 +1,17 @@
 import crypto from 'node:crypto'
 
-const MAGIC = Buffer.from('CFENC1', 'utf8')
-const IV_LENGTH = 12
-const TAG_LENGTH = 16
+export const ENCRYPTION_MAGIC = Buffer.from('CFENC1', 'utf8')
+export const ENCRYPTION_IV_LENGTH = 12
+export const ENCRYPTION_TAG_LENGTH = 16
 
 export const isEncryptedPayload = (payload: Buffer): boolean => {
-  if (payload.length < MAGIC.length + IV_LENGTH + TAG_LENGTH) return false
-  return payload.subarray(0, MAGIC.length).equals(MAGIC)
+  if (
+    payload.length <
+    ENCRYPTION_MAGIC.length + ENCRYPTION_IV_LENGTH + ENCRYPTION_TAG_LENGTH
+  ) {
+    return false
+  }
+  return payload.subarray(0, ENCRYPTION_MAGIC.length).equals(ENCRYPTION_MAGIC)
 }
 
 export const deriveAes256Key = (rawKey: string): Buffer => {
@@ -33,14 +38,14 @@ export const encryptBuffer = (
   key: Buffer,
   aad?: Buffer,
 ): Buffer => {
-  const iv = crypto.randomBytes(IV_LENGTH)
+  const iv = crypto.randomBytes(ENCRYPTION_IV_LENGTH)
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv)
   if (aad && aad.length > 0) {
     cipher.setAAD(aad)
   }
   const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()])
   const tag = cipher.getAuthTag()
-  return Buffer.concat([MAGIC, iv, ciphertext, tag])
+  return Buffer.concat([ENCRYPTION_MAGIC, iv, ciphertext, tag])
 }
 
 export const decryptBuffer = (
@@ -52,9 +57,9 @@ export const decryptBuffer = (
     throw new Error('Payload is not encrypted (missing magic header)')
   }
 
-  const ivStart = MAGIC.length
-  const ivEnd = ivStart + IV_LENGTH
-  const tagStart = encryptedPayload.length - TAG_LENGTH
+  const ivStart = ENCRYPTION_MAGIC.length
+  const ivEnd = ivStart + ENCRYPTION_IV_LENGTH
+  const tagStart = encryptedPayload.length - ENCRYPTION_TAG_LENGTH
 
   if (tagStart <= ivEnd) {
     throw new Error('Encrypted payload is too short')
@@ -71,4 +76,3 @@ export const decryptBuffer = (
   decipher.setAuthTag(tag)
   return Buffer.concat([decipher.update(ciphertext), decipher.final()])
 }
-

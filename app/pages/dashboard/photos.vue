@@ -363,18 +363,6 @@ const uploadImage = async (file: File, existingFileId?: string) => {
 
           const tasks = []
 
-          const encryptionEnabled = await $fetch('/api/settings/storage/encryption/enabled')
-          if (encryptionEnabled) {
-            tasks.push({
-              payload: {
-                type: 'file-encryption',
-                storageKey: signedUrlResponse.fileKey,
-              },
-              priority: 9,
-              maxAttempts: 3,
-            })
-          }
-
           tasks.push({
             payload: {
               type: taskType,

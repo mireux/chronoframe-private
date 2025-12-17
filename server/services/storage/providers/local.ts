@@ -1,5 +1,7 @@
-import { promises as fs } from 'node:fs'
+import { createWriteStream, promises as fs } from 'node:fs'
 import path from 'node:path'
+import type { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import type {
   LocalStorageConfig,
   StorageObject,
@@ -73,6 +75,53 @@ export class LocalStorageProvider implements StorageProvider {
     }
 
     await new Promise(resolve => setTimeout(resolve, 150))
+
+    const stat = await fs.stat(absFile)
+    this.logger?.success?.(`Saved file: ${absFile}`)
+    return {
+      key: relKey,
+      size: stat.size,
+      lastModified: stat.mtime,
+    }
+  }
+
+  async createFromStream(
+    key: string,
+    stream: Readable,
+  ): Promise<StorageObject> {
+    const { absFile, relKey } = this.resolveAbsoluteKey(key)
+    await ensureDir(path.dirname(absFile))
+
+    const tempFile = `${absFile}.tmp-${Date.now()}`
+
+    try {
+      await pipeline(stream, createWriteStream(tempFile))
+
+      let retries = 3
+      while (retries > 0) {
+        try {
+          await fs.rename(tempFile, absFile)
+          break
+        } catch (renameErr) {
+          const error = renameErr as NodeJS.ErrnoException
+          if (error.code === 'EPERM' && retries > 1) {
+            await new Promise((resolve) => setTimeout(resolve, 300))
+            retries--
+            continue
+          }
+          throw renameErr
+        }
+      }
+    } catch (err) {
+      try {
+        await fs.unlink(tempFile)
+      } catch {
+        // ignore cleanup errors
+      }
+      throw err
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 150))
 
     const stat = await fs.stat(absFile)
     this.logger?.success?.(`Saved file: ${absFile}`)

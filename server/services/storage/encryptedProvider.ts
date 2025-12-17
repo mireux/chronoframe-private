@@ -1,6 +1,17 @@
+import crypto from 'node:crypto'
+import { PassThrough } from 'node:stream'
+import type { Readable } from 'node:stream'
 import type { StorageObject, StorageProvider, UploadOptions } from './interfaces'
 import { settingsManager } from '~~/server/services/settings/settingsManager'
-import { decryptBuffer, deriveAes256Key, encryptBuffer, isEncryptedPayload } from './encryption'
+import {
+  decryptBuffer,
+  deriveAes256Key,
+  ENCRYPTION_IV_LENGTH,
+  ENCRYPTION_MAGIC,
+  ENCRYPTION_TAG_LENGTH,
+  encryptBuffer,
+  isEncryptedPayload,
+} from './encryption'
 
 const getEncryptionSettings = async (): Promise<{
   encryptOnWrite: boolean
@@ -16,6 +27,41 @@ const getEncryptionSettings = async (): Promise<{
   }
 
   return { encryptOnWrite, key: deriveAes256Key(rawKey) }
+}
+
+const createEncryptedStream = (
+  plaintextStream: Readable,
+  key: Buffer,
+  aad?: Buffer,
+): { stream: Readable; overheadBytes: number } => {
+  const iv = crypto.randomBytes(ENCRYPTION_IV_LENGTH)
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv)
+  if (aad && aad.length > 0) {
+    cipher.setAAD(aad)
+  }
+
+  const out = new PassThrough()
+  out.write(Buffer.concat([ENCRYPTION_MAGIC, iv]))
+
+  plaintextStream.on('error', (err) => out.destroy(err))
+  cipher.on('error', (err) => out.destroy(err))
+
+  cipher.on('end', () => {
+    try {
+      out.end(cipher.getAuthTag())
+    } catch (err) {
+      out.destroy(err instanceof Error ? err : new Error(String(err)))
+    }
+  })
+
+  plaintextStream.pipe(cipher)
+  cipher.pipe(out, { end: false })
+
+  return {
+    stream: out,
+    overheadBytes:
+      ENCRYPTION_MAGIC.length + ENCRYPTION_IV_LENGTH + ENCRYPTION_TAG_LENGTH,
+  }
 }
 
 export class EncryptedStorageProvider implements StorageProvider {
@@ -50,6 +96,75 @@ export class EncryptedStorageProvider implements StorageProvider {
       : encryptBuffer(fileBuffer, encryptionKey)
 
     return await this.inner.create(key, payload, 'application/octet-stream')
+  }
+
+  async createFromStream(
+    key: string,
+    stream: Readable,
+    contentLength: number | null,
+    contentType?: string,
+    skipEncryption?: boolean,
+  ): Promise<StorageObject> {
+    const { encryptOnWrite, key: encryptionKey } = await getEncryptionSettings()
+
+    if (!encryptOnWrite || skipEncryption) {
+      if (this.inner.createFromStream) {
+        return await this.inner.createFromStream(
+          key,
+          stream,
+          contentLength,
+          contentType,
+        )
+      }
+
+      const chunks: Buffer[] = []
+      for await (const chunk of stream) {
+        if (Buffer.isBuffer(chunk)) {
+          chunks.push(chunk)
+        } else if (chunk instanceof Uint8Array) {
+          chunks.push(Buffer.from(chunk))
+        } else {
+          chunks.push(Buffer.from(String(chunk)))
+        }
+      }
+      return await this.inner.create(
+        key,
+        Buffer.concat(chunks),
+        contentType,
+        skipEncryption,
+      )
+    }
+
+    if (!encryptionKey) {
+      throw new Error('Storage encryption is enabled but encryption key is not set')
+    }
+
+    if (!this.inner.createFromStream) {
+      const chunks: Buffer[] = []
+      for await (const chunk of stream) {
+        if (Buffer.isBuffer(chunk)) {
+          chunks.push(chunk)
+        } else if (chunk instanceof Uint8Array) {
+          chunks.push(Buffer.from(chunk))
+        } else {
+          chunks.push(Buffer.from(String(chunk)))
+        }
+      }
+      const encrypted = encryptBuffer(Buffer.concat(chunks), encryptionKey)
+      return await this.inner.create(key, encrypted, 'application/octet-stream')
+    }
+
+    const encrypted = createEncryptedStream(stream, encryptionKey)
+    const encryptedLength =
+      contentLength === null ? null : contentLength + encrypted.overheadBytes
+
+    return await this.inner.createFromStream(
+      key,
+      encrypted.stream,
+      encryptedLength,
+      'application/octet-stream',
+      true,
+    )
   }
 
   async encryptFile(key: string): Promise<void> {
