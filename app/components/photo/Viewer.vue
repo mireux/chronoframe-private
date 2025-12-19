@@ -8,11 +8,13 @@ import 'swiper/swiper-bundle.css'
 
 import LoadingIndicator from './LoadingIndicator.vue'
 import ProgressiveImage from './ProgressiveImage.vue'
+import PanoramaGate from './PanoramaGate.vue'
 import GalleryThumbnail from './GalleryThumbnail.vue'
 import InfoPanel from './InfoPanel.vue'
 import ReactionPicker from './ReactionPicker.vue'
 import ReactionConfetti from './ReactionConfetti.vue'
 import type { LoadingIndicatorRef } from './LoadingIndicator.vue'
+import { getPanoramaFormatFromStorageKey } from '~/libs/panorama/format'
 
 interface Props {
   photos: Photo[]
@@ -100,6 +102,12 @@ const { convertMovToMp4, getProcessingState } = useLivePhotoProcessor()
 const currentPhoto = computed(() => props.photos[props.currentIndex])
 const isMobile = useMediaQuery('(max-width: 768px)')
 
+const panoramaPreviewPhotoId = ref<string | null>(null)
+
+const isPanoramaPhoto = (photo: Photo) => {
+  return getPanoramaFormatFromStorageKey(photo.storageKey) !== null
+}
+
 // LivePhoto processing state
 const livePhotoProcessingState = computed(() => {
   return currentPhoto.value
@@ -129,6 +137,7 @@ watch(
       isLivePhotoHovering.value = false
       isLivePhotoPlaying.value = false
       isLivePhotoTouching.value = false
+      panoramaPreviewPhotoId.value = null
       touchCount.value = 0
       if (longPressTimer.value) {
         clearTimeout(longPressTimer.value)
@@ -148,6 +157,7 @@ watch(
       document.body.style.overflow = ''
     } else {
       document.body.style.overflow = 'hidden'
+      panoramaPreviewPhotoId.value = null
       // Process current LivePhoto when viewer opens
       nextTick(() => {
         processCurrentLivePhoto()
@@ -176,6 +186,7 @@ watch(
     isLivePhotoPlaying.value = false
     isLivePhotoHovering.value = false
     isLivePhotoTouching.value = false
+    panoramaPreviewPhotoId.value = null
     touchCount.value = 0
     if (longPressTimer.value) {
       clearTimeout(longPressTimer.value)
@@ -709,7 +720,7 @@ const swiperModules = [Navigation, Keyboard, Virtual]
 
                     <!-- Main Image (only show for non-video items) -->
                     <ProgressiveImage
-                      v-if="!photo.isVideo"
+                      v-if="!photo.isVideo && !isPanoramaPhoto(photo)"
                       class="h-full w-full object-contain transition-opacity duration-400"
                       :class="{
                         'opacity-0':
@@ -749,6 +760,19 @@ const swiperModules = [Navigation, Keyboard, Virtual]
                       :is-live-photo="photo.isLivePhoto === 1"
                       :live-photo-video-url="
                         photo.livePhotoVideoUrl || undefined
+                      "
+                    />
+
+                    <PanoramaGate
+                      v-else-if="!photo.isVideo && isPanoramaPhoto(photo)"
+                      :photo="photo"
+                      :open="panoramaPreviewPhotoId === photo.id"
+                      :is-current-image="index === currentIndex"
+                      :loading-indicator-ref="loadingIndicatorRef || null"
+                      @update:open="
+                        (v) => {
+                          panoramaPreviewPhotoId = v ? photo.id : null
+                        }
                       "
                     />
 

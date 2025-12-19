@@ -1,5 +1,10 @@
 <script lang="ts" setup>
 import { motion } from 'motion-v'
+import type { Photo } from '~~/server/utils/db'
+import {
+  findDisplayPhotoById,
+  mergePanoramaPhotoVariants,
+} from '~/libs/panorama/photo-variants'
 
 const route = useRoute()
 const router = useRouter()
@@ -27,17 +32,21 @@ if (error.value) {
 
 const albumData = computed(() => album.value)
 
+const albumPhotos = computed(() => {
+  return mergePanoramaPhotoVariants((albumData.value?.photos ?? []) as Photo[])
+})
+
 const albumStats = computed(() => {
   if (!albumData.value) return null
 
-  const photos = albumData.value.photos || []
+  const photos = albumPhotos.value
   const totalPhotos = photos.length
-  const photosWithDates = photos.filter((p: any) => p.dateTaken).length
-  const photosWithExif = photos.filter((p: any) => p.exif).length
+  const photosWithDates = photos.filter((p) => p.dateTaken).length
+  const photosWithExif = photos.filter((p) => p.exif).length
 
   const allDates = photos
-    .map((p: any) => p?.dateTaken)
-    .filter((date: any): date is string => Boolean(date))
+    .map((p) => p.dateTaken)
+    .filter((date): date is string => Boolean(date))
     .map((date: string) => dayjs(date))
     .sort((a, b) => (a.isBefore(b) ? -1 : 1))
 
@@ -75,13 +84,11 @@ const dateRangeText = computed(() => {
 
 // 用于 MasonryWall 的照片数据
 const masonryItems = computed(() => {
-  return (
-    albumData.value?.photos?.map((photo: any, index: number) => ({
-      id: photo.id,
-      photo,
-      originalIndex: index,
-    })) ?? []
-  )
+  return albumPhotos.value.map((photo, index: number) => ({
+    id: photo.id,
+    photo,
+    originalIndex: index,
+  }))
 })
 
 const isMobile = useMediaQuery('(max-width: 768px)')
@@ -92,7 +99,7 @@ const minColumns = computed(() => (isMobile.value ? 2 : 2))
 const MASONRY_GAP = 4
 
 const handleOpenViewer = (index: number) => {
-  const photos = albumData.value?.photos
+  const photos = albumPhotos.value
   if (photos && photos[index]) {
     // 跳转到照片详情页，并通过 query 参数传递相册 ID
     // 动态路由页面会自动加载相册数据并打开查看器
@@ -109,12 +116,12 @@ const coverPhoto = computed(() => {
 
   // coverPhotoId first
   if (album.coverPhotoId) {
-    const cover = album.photos.find((p: any) => p.id === album.coverPhotoId)
+    const cover = findDisplayPhotoById(albumPhotos.value, album.coverPhotoId)
     if (cover) return cover
   }
 
   // otherwise first photo
-  return album.photos[0] || null
+  return albumPhotos.value[0] || null
 })
 
 const scrollToTop = () => {

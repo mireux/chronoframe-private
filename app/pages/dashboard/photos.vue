@@ -4,6 +4,12 @@ import type { Photo, PipelineQueueItem } from '~~/server/utils/db'
 import { h, resolveComponent } from 'vue'
 import { Icon, UBadge } from '#components'
 import ThumbImage from '~/components/ui/ThumbImage.vue'
+import {
+  getPanoramaFormatFromName,
+  getUploadContentTypeForPanorama,
+  getPanoramaFormatFromStorageKey,
+} from '~/libs/panorama/format'
+import { createPanoramaThumbnail } from '~/libs/panorama/thumbnail'
 
 const UCheckbox = resolveComponent('UCheckbox')
 const Rating = resolveComponent('Rating')
@@ -259,11 +265,21 @@ const uploadImage = async (file: File, existingFileId?: string) => {
     timeout: 10 * 60 * 1000, // 10分钟超时
   })
 
+  const panoramaFormat = getPanoramaFormatFromName(file.name)
+  const contentType = panoramaFormat
+    ? getUploadContentTypeForPanorama(panoramaFormat)
+    : file.type
+
+  const uploadFile =
+    panoramaFormat && file.type !== contentType
+      ? new File([file], file.name, { type: contentType, lastModified: file.lastModified })
+      : file
+
   // 获取或创建 uploadingFile
   let uploadingFile = uploadingFiles.value.get(fileId)
   if (!uploadingFile) {
     uploadingFile = {
-      file,
+      file: uploadFile,
       fileName,
       fileId,
       status: 'preparing',
@@ -286,7 +302,7 @@ const uploadImage = async (file: File, existingFileId?: string) => {
       method: 'POST',
       body: {
         fileName: file.name,
-        contentType: file.type,
+        contentType,
       },
     })
 
@@ -308,7 +324,7 @@ const uploadImage = async (file: File, existingFileId?: string) => {
     uploadingFiles.value = new Map(uploadingFiles.value)
 
     // 第二步：使用 composable 上传文件到存储
-    await uploadManager.uploadFile(file, signedUrlResponse.signedUrl, {
+    await uploadManager.uploadFile(uploadFile, signedUrlResponse.signedUrl, {
       onProgress: (progress: UploadProgress) => {
         uploadingFile.progress = progress.percentage
         uploadingFile.uploadProgress = {
@@ -337,6 +353,57 @@ const uploadImage = async (file: File, existingFileId?: string) => {
         uploadingFiles.value = new Map(uploadingFiles.value)
 
         try {
+          if (panoramaFormat) {
+            uploadingFile.stage = 'thumbnail'
+            uploadingFiles.value = new Map(uploadingFiles.value)
+
+            const prepare = await $fetch('/api/photos/panorama/prepare', {
+              method: 'POST',
+              body: { storageKey: signedUrlResponse.fileKey },
+            })
+
+            const { thumbnailBlob, thumbnailHash, width, height } =
+              await createPanoramaThumbnail({
+                file: uploadFile,
+                format: panoramaFormat,
+              })
+
+            const thumbnailUpload = useUpload({ timeout: 2 * 60 * 1000 })
+            const thumbFile = new File([thumbnailBlob], `${prepare.photoId}.webp`, {
+              type: 'image/webp',
+            })
+            const internalThumbUrl = `/api/photos/upload?key=${encodeURIComponent(prepare.thumbnailKey)}`
+            await thumbnailUpload.uploadFile(thumbFile, internalThumbUrl)
+
+            const finalize = await $fetch('/api/photos/panorama', {
+              method: 'POST',
+              body: {
+                storageKey: signedUrlResponse.fileKey,
+                thumbnailKey: prepare.thumbnailKey,
+                thumbnailHash,
+                width,
+                height,
+                fileSize: uploadFile.size,
+                lastModified: new Date(uploadFile.lastModified).toISOString(),
+                title: uploadFile.name,
+                albumId: selectedAlbumId.value || undefined,
+              },
+            })
+
+            uploadingFile.status = 'completed'
+            uploadingFile.stage = null
+            uploadingFiles.value = new Map(uploadingFiles.value)
+
+            if (finalize?.photoId) {
+              currentBatchPhotoIds.value.push(finalize.photoId)
+            } else if (prepare?.photoId) {
+              currentBatchPhotoIds.value.push(prepare.photoId)
+            }
+
+            await refresh()
+            return
+          }
+
           const isMovFile = file.type === 'video/quicktime' || file.name.toLowerCase().endsWith('.mov')
 
           const otherVideoTypes = [
@@ -946,6 +1013,7 @@ const columns: TableColumn<Photo>[] = [
       const url = row.original.thumbnailUrl
       const photoId = row.original.id
       const photoAlbums = photoToAlbumsMap.value.get(photoId)
+      const panoramaFormat = getPanoramaFormatFromStorageKey(row.original.storageKey)
 
       const isInHiddenAlbum = photoAlbums?.some(albumId => {
         const album = albums.value?.find(a => a.id === albumId)
@@ -962,6 +1030,13 @@ const columns: TableColumn<Photo>[] = [
           onClick: () => openImagePreview(row.original),
           style: { cursor: url ? 'pointer' : 'default' },
         }),
+        panoramaFormat ? h('div', {
+          class: 'absolute bottom-0.5 right-0.5 rounded px-1 py-0.5 flex items-center gap-1 text-white text-[10px] font-medium',
+          style: { backgroundColor: 'rgba(0,0,0,0.6)' }
+        }, [
+          h(Icon, { name: 'tabler:sphere', class: 'w-3 h-3' }),
+          h('span', { class: 'uppercase' }, panoramaFormat)
+        ]) : null,
         isInHiddenAlbum ? h('div', {
           class: 'absolute top-0.5 right-0.5 rounded-full p-0.5 flex items-center justify-center',
           style: { backgroundColor: '#FBE7F1', width: '18px', height: '18px' }
@@ -1282,6 +1357,8 @@ const validateFile = (file: File): { valid: boolean; error?: string } => {
     'image/gif',
     'image/bmp',
     'image/tiff',
+    'image/vnd.radiance',
+    'image/x-exr',
   ]
 
   const allowedVideoTypes = [
@@ -1297,7 +1374,7 @@ const validateFile = (file: File): { valid: boolean; error?: string } => {
   ]
 
   const videoExtensions = ['.mov', '.mp4', '.avi', '.mkv', '.webm', '.flv', '.wmv', '.m4v', '.3gp', '.mpeg', '.mpg']
-  const imageExtensions = ['.heic', '.heif', '.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.tif']
+  const imageExtensions = ['.heic', '.heif', '.hdr', '.exr', '.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.tif']
 
   const isValidImageType = allowedImageTypes.includes(file.type)
   const isValidVideoType = allowedVideoTypes.includes(file.type)
@@ -1888,13 +1965,21 @@ const handleAddToAlbums = async () => {
 // 图片预览弹窗
 const isImagePreviewOpen = ref(false)
 const previewingPhoto = ref<Photo | null>(null)
+const isPanoramaPreviewOpen = ref(false)
 
 const openImagePreview = (photo: Photo) => {
   if (photo) {
     previewingPhoto.value = photo
     isImagePreviewOpen.value = true
+    isPanoramaPreviewOpen.value = false
   }
 }
+
+watch(isImagePreviewOpen, (open) => {
+  if (!open) {
+    isPanoramaPreviewOpen.value = false
+  }
+})
 
 const openInNewTab = (url: string) => {
   if (typeof window !== 'undefined') {
@@ -2409,7 +2494,7 @@ onUnmounted(() => {
                   icon="tabler:cloud-upload"
                   layout="grid"
                   size="xl"
-                  accept="image/jpeg,image/png,image/heic,image/heif,image/webp,image/gif,image/bmp,image/tiff,video/quicktime,video/mp4,video/x-msvideo,video/x-matroska,video/webm,video/x-flv,video/x-ms-wmv,video/3gpp,video/mpeg,.mov,.mp4,.avi,.mkv,.webm,.flv,.wmv,.m4v,.3gp,.mpeg,.mpg,.heic,.heif"
+                  accept="image/jpeg,image/png,image/heic,image/heif,image/webp,image/gif,image/bmp,image/tiff,image/vnd.radiance,image/x-exr,video/quicktime,video/mp4,video/x-msvideo,video/x-matroska,video/webm,video/x-flv,video/x-ms-wmv,video/3gpp,video/mpeg,.hdr,.exr,.mov,.mp4,.avi,.mkv,.webm,.flv,.wmv,.m4v,.3gp,.mpeg,.mpg,.heic,.heif"
                   multiple
                   highlight
                   dropzone
@@ -3164,8 +3249,19 @@ onUnmounted(() => {
               style="max-height: calc(100vh - 12rem)"
             >
               <div class="w-full max-w-2xl rounded-lg overflow-hidden">
+                <PhotoPanoramaGate
+                  v-if="
+                    previewingPhoto &&
+                    getPanoramaFormatFromStorageKey(previewingPhoto.storageKey)
+                  "
+                  :photo="previewingPhoto"
+                  :open="isPanoramaPreviewOpen"
+                  :loading-indicator-ref="null"
+                  @update:open="(v) => (isPanoramaPreviewOpen = v)"
+                />
+
                 <MasonryItemPhoto
-                  v-if="previewingPhoto"
+                  v-else-if="previewingPhoto"
                   :photo="previewingPhoto"
                   :index="0"
                   @visibility-change="() => {}"

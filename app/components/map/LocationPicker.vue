@@ -23,7 +23,7 @@ const emit = defineEmits<{
 
 const mapInstance = ref<MapInstance | null>(null)
 const markerCoordinates = ref<[number, number] | null>(null)
-const { locale } = useI18n()
+const { locale } = useI18n({ useScope: 'global' })
 
 const mapConfig = computed(() => {
   const config = getSetting('map')

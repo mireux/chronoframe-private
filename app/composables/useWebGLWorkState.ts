@@ -4,7 +4,7 @@ import { LoadingState } from '@chronoframe/webgl-image'
 export const useWebGLWorkState = (
   loadingIndicatorRef: LoadingIndicatorRef | null,
 ) => {
-  const { t } = useI18n()
+  const { t } = useI18n({ useScope: 'global' })
 
   return (
     isLoading: boolean,

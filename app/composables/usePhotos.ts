@@ -1,18 +1,20 @@
 import type { AsyncDataRequestStatus } from "#app"
+import type { DisplayPhoto } from '~/libs/panorama/photo-variants'
+import { findDisplayPhotoById } from '~/libs/panorama/photo-variants'
 
 interface PhotosContext {
-  photos: Ref<Photo[]>
+  photos: Ref<DisplayPhoto[]>
   status: Ref<AsyncDataRequestStatus>
   refresh: () => Promise<void>
-  getPhotoById: (id: string) => Photo | undefined
-  filterPhotos: (predicate: (photo: Photo) => boolean) => Photo[]
+  getPhotoById: (id: string) => DisplayPhoto | undefined
+  filterPhotos: (predicate: (photo: DisplayPhoto) => boolean) => DisplayPhoto[]
   totalCount: ComputedRef<number>
 }
 
 const PhotosContextKey = Symbol('PhotosContext') as InjectionKey<PhotosContext>
 
 export function providePhotos(
-  photos: Ref<Photo[]>,
+  photos: Ref<DisplayPhoto[]>,
   status: Ref<AsyncDataRequestStatus>,
   refresh: () => Promise<void>,
 ) {
@@ -21,9 +23,9 @@ export function providePhotos(
     status,
     refresh,
     getPhotoById: (id: string) => {
-      return photos.value.find((photo) => photo.id === id)
+      return findDisplayPhotoById(photos.value, id)
     },
-    filterPhotos: (predicate: (photo: Photo) => boolean) => {
+    filterPhotos: (predicate: (photo: DisplayPhoto) => boolean) => {
       return photos.value.filter(predicate)
     },
     totalCount: computed(() => photos.value.length),

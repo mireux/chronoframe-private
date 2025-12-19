@@ -41,11 +41,17 @@ export default eventHandler(async (event) => {
   const contentType = getHeader(event, 'content-type') || 'application/octet-stream'
   
   // MIME 类型白名单验证（可通过环境变量配置）
-  const config = useRuntimeConfig(event)
-  const whitelistEnabled = config.upload.mime.whitelistEnabled
+  const whitelistEnabled =
+    (await settingsManager.get<boolean>('upload', 'mime.whitelistEnabled', true)) ??
+    true
   
   if (whitelistEnabled) {
-    const whitelistStr = config.upload.mime.whitelist
+    const whitelistStr =
+      (await settingsManager.get<string>(
+        'upload',
+        'mime.whitelist',
+        '',
+      )) ?? ''
     const allowedTypes = whitelistStr
       ? whitelistStr.split(',').map((type: string) => type.trim()).filter(Boolean)
       : []

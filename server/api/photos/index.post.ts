@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm'
 import { generateSafePhotoId } from '~~/server/utils/file-utils'
 import { isStorageEncryptionEnabled, resolveOriginalKeyForPhoto, toFileProxyUrl } from '~~/server/utils/publicFile'
 import { safeUseTranslation } from '~~/server/utils/i18n'
+import { settingsManager } from '~~/server/services/settings/settingsManager'
 
 const VIDEO_EXTENSIONS = new Set([
   '.mov',
@@ -54,7 +55,6 @@ const isLikelyImageKey = (storageKey?: string | null): boolean => {
 export default eventHandler(async (event) => {
   await requireUserSession(event)
   const { storageProvider } = useStorageProvider(event)
-  const config = useRuntimeConfig(event)
   const t = await safeUseTranslation(event)
   const encryptionEnabled = await isStorageEncryptionEnabled()
 
@@ -73,8 +73,13 @@ export default eventHandler(async (event) => {
     const objectKey = `${(storageProvider.config?.prefix || '').replace(/\/+$/, '')}/${fileName}`
 
     // 重复文件检测
-    const duplicateCheckEnabled =
-      config.upload.duplicateCheck.enabled && !skipDuplicateCheck
+    const duplicateCheckEnabledSetting =
+      (await settingsManager.get<boolean>(
+        'upload',
+        'duplicateCheck.enabled',
+        true,
+      )) ?? true
+    const duplicateCheckEnabled = duplicateCheckEnabledSetting && !skipDuplicateCheck
     let existingPhoto = null
 
     if (duplicateCheckEnabled) {
@@ -111,7 +116,12 @@ export default eventHandler(async (event) => {
       }
 
       if (existingPhoto) {
-        const checkMode = config.upload.duplicateCheck.mode || 'skip'
+        const checkMode =
+          (await settingsManager.get<string>(
+            'upload',
+            'duplicateCheck.mode',
+            'skip',
+          )) || 'skip'
 
         if (checkMode === 'block') {
           // 阻止模式：直接拒绝上传

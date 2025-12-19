@@ -1,4 +1,12 @@
 <script lang="ts" setup>
+import type { Photo } from '~~/server/utils/db'
+import type { DisplayPhoto } from '~/libs/panorama/photo-variants'
+import {
+  findDisplayPhotoById,
+  findDisplayPhotoIndexById,
+  mergePanoramaPhotoVariants,
+} from '~/libs/panorama/photo-variants'
+
 definePageMeta({
   layout: 'masonry',
   // 固定 key 防止路径参数变化时创建新的实例
@@ -31,7 +39,7 @@ const displayPhotos = computed(() => {
   }
   // 其次使用从 API 加载的相册照片
   if (albumData.value?.photos) {
-    return albumData.value.photos
+    return mergePanoramaPhotoVariants(albumData.value.photos as Photo[])
   }
   // 最后使用全局照片列表
   return photos.value
@@ -39,9 +47,10 @@ const displayPhotos = computed(() => {
 
 const slug = computed(() => (route.params.slug as string[]) || [])
 const photoId = computed(() => slug.value[0] || null)
-const currentPhoto = computed(() =>
-  displayPhotos.value.find((photo) => photo.id === photoId.value),
-)
+const currentPhoto = computed(() => {
+  if (!photoId.value) return undefined
+  return findDisplayPhotoById(displayPhotos.value, photoId.value)
+})
 
 const returnRouteFromQuery = computed(() => {
   const from = route.query.from
@@ -92,9 +101,9 @@ watch(
 
     if (currentPhotoId) {
       // 确定使用哪个照片列表
-      let photosToUse: Photo[]
+      let photosToUse: DisplayPhoto[]
       if (currentAlbumId && currentAlbumPhotos) {
-        photosToUse = currentAlbumPhotos
+        photosToUse = mergePanoramaPhotoVariants(currentAlbumPhotos as Photo[])
       } else if (albumContext.value?.photos) {
         photosToUse = albumContext.value.photos
       } else {
@@ -102,9 +111,7 @@ watch(
       }
 
       if (photosToUse.length > 0) {
-        const foundIndex = photosToUse.findIndex(
-          (photo) => photo.id === currentPhotoId,
-        )
+        const foundIndex = findDisplayPhotoIndexById(photosToUse, currentPhotoId)
         if (foundIndex !== -1) {
           useHead({
             title: photosToUse[foundIndex]?.title || $t('title.fallback.photo'),
@@ -119,7 +126,7 @@ watch(
               const albumRoute = `/albums/${currentAlbumId}`
               openViewer(foundIndex, albumRoute, {
                 albumId: currentAlbumId,
-                photos: currentAlbumPhotos,
+                photos: photosToUse,
               })
             } else {
               // 直接访问照片详情页，不设置相册上下文

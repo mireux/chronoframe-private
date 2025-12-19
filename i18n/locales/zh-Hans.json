@@ -44,6 +44,8 @@
           "fileSizeDesc": "文件大小(降序)",
           "titleAsc": "标题(A-Z)",
           "titleDesc": "标题(Z-A)",
+          "formatAsc": "格式(A-Z)",
+          "formatDesc": "格式(Z-A)",
           "shuffle": "打乱顺序"
         },
         "title": "排序方式",

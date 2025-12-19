@@ -2,6 +2,7 @@
 import { motion } from 'motion-v'
 import { clusterMarkers, photosToMarkers } from '~/utils/clustering'
 import { transformCoordinate } from '~/utils/coordinate-transform'
+import { findDisplayPhotoById } from '~/libs/panorama/photo-variants'
 
 useHead({
   title: $t('title.globe'),
@@ -224,7 +225,7 @@ const onMapLoaded = (map: any) => {
 
   const { photoId } = route.query
   if (photoId && typeof photoId === 'string') {
-    const photo = photosWithLocation.value.find((photo) => photo.id === photoId)
+    const photo = findDisplayPhotoById(photosWithLocation.value, photoId)
     if (photo && photo.latitude && photo.longitude) {
       const [lng, lat] = transformCoordinate(
         photo.longitude,

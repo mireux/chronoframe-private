@@ -59,6 +59,28 @@ const globalSortState = ref<SortState>({
       value: (photo: Photo) => (photo.title || photo.id).toLowerCase(),
       order: 'desc',
     },
+    {
+      key: 'format-asc',
+      labelI18n: 'ui.action.sort.options.formatAsc',
+      icon: 'tabler:sort-ascending-letters',
+      value: (photo: Photo) => {
+        const key = photo.storageKey || ''
+        const idx = key.lastIndexOf('.')
+        return (idx === -1 ? '' : key.slice(idx + 1)).toLowerCase()
+      },
+      order: 'asc',
+    },
+    {
+      key: 'format-desc',
+      labelI18n: 'ui.action.sort.options.formatDesc',
+      icon: 'tabler:sort-descending-letters',
+      value: (photo: Photo) => {
+        const key = photo.storageKey || ''
+        const idx = key.lastIndexOf('.')
+        return (idx === -1 ? '' : key.slice(idx + 1)).toLowerCase()
+      },
+      order: 'desc',
+    },
   ],
 })
 

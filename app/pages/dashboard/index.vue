@@ -13,7 +13,7 @@ useHead({
 const dayjs = useDayjs()
 const config = useRuntimeConfig()
 const { photos } = usePhotos()
-const { locale } = useI18n()
+const { locale } = useI18n({ useScope: 'global' })
 
 const { data: dashboardStats, refresh: refreshStats } =
   await useFetch('/api/system/stats')

@@ -49,8 +49,10 @@ export const sanitizeFileName = (
  * @returns 安全的照片ID
  */
 export const generateSafePhotoId = (s3key: string): string => {
-  const baseName = path.basename(s3key, path.extname(s3key))
-  return sanitizeFileName(baseName, {
+  const ext = path.extname(s3key).toLowerCase()
+  const baseName = path.basename(s3key, ext)
+  const suffix = ext === '.hdr' ? '_hdr' : ext === '.exr' ? '_exr' : ''
+  return sanitizeFileName(`${baseName}${suffix}`, {
     maxLength: 32,
     fallbackPrefix: 'photo',
     minLength: 3

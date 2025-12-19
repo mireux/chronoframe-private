@@ -1,5 +1,10 @@
 <script lang="ts" setup>
 import type { PipelineQueueItem } from '~~/server/utils/db'
+import {
+  getPanoramaFormatFromName,
+  getUploadContentTypeForPanorama,
+} from '~/libs/panorama/format'
+import { createPanoramaThumbnail } from '~/libs/panorama/thumbnail'
 
 interface UploadingFile {
   file: File
@@ -301,10 +306,20 @@ const uploadImage = async (file: File, existingFileId?: string) => {
     timeout: 10 * 60 * 1000,
   })
 
+  const panoramaFormat = getPanoramaFormatFromName(file.name)
+  const contentType = panoramaFormat
+    ? getUploadContentTypeForPanorama(panoramaFormat)
+    : file.type
+
+  const uploadFile =
+    panoramaFormat && file.type !== contentType
+      ? new File([file], file.name, { type: contentType, lastModified: file.lastModified })
+      : file
+
   let uploadingFile = uploadingFiles.value.get(fileId)
   if (!uploadingFile) {
     uploadingFile = {
-      file,
+      file: uploadFile,
       fileName,
       fileId,
       status: 'preparing',
@@ -325,7 +340,7 @@ const uploadImage = async (file: File, existingFileId?: string) => {
       method: 'POST',
       body: {
         fileName: file.name,
-        contentType: file.type,
+        contentType,
       },
     })
 
@@ -344,7 +359,7 @@ const uploadImage = async (file: File, existingFileId?: string) => {
     uploadingFile.progress = 0
     uploadingFiles.value = new Map(uploadingFiles.value)
 
-    await uploadManager.uploadFile(file, signedUrlResponse.signedUrl, {
+    await uploadManager.uploadFile(uploadFile, signedUrlResponse.signedUrl, {
       onProgress: (progress: UploadProgress) => {
         uploadingFile.progress = progress.percentage
         uploadingFile.uploadProgress = {
@@ -372,6 +387,57 @@ const uploadImage = async (file: File, existingFileId?: string) => {
         uploadingFiles.value = new Map(uploadingFiles.value)
 
         try {
+          if (panoramaFormat) {
+            uploadingFile.stage = 'thumbnail'
+            uploadingFiles.value = new Map(uploadingFiles.value)
+
+            const prepare = await $fetch('/api/photos/panorama/prepare', {
+              method: 'POST',
+              body: { storageKey: signedUrlResponse.fileKey },
+            })
+
+            const { thumbnailBlob, thumbnailHash, width, height } =
+              await createPanoramaThumbnail({
+                file: uploadFile,
+                format: panoramaFormat,
+              })
+
+            const thumbnailUpload = useUpload({ timeout: 2 * 60 * 1000 })
+            const thumbFile = new File([thumbnailBlob], `${prepare.photoId}.webp`, {
+              type: 'image/webp',
+            })
+            const internalThumbUrl = `/api/photos/upload?key=${encodeURIComponent(prepare.thumbnailKey)}`
+            await thumbnailUpload.uploadFile(thumbFile, internalThumbUrl)
+
+            const finalize = await $fetch('/api/photos/panorama', {
+              method: 'POST',
+              body: {
+                storageKey: signedUrlResponse.fileKey,
+                thumbnailKey: prepare.thumbnailKey,
+                thumbnailHash,
+                width,
+                height,
+                fileSize: uploadFile.size,
+                lastModified: new Date(uploadFile.lastModified).toISOString(),
+                title: uploadFile.name,
+                albumId: selectedAlbumId.value || undefined,
+              },
+            })
+
+            uploadingFile.status = 'completed'
+            uploadingFile.stage = null
+            uploadingFiles.value = new Map(uploadingFiles.value)
+
+            if (finalize?.photoId) {
+              completedPhotoIds.value.push(finalize.photoId)
+            } else if (prepare?.photoId) {
+              completedPhotoIds.value.push(prepare.photoId)
+            }
+
+            await refreshPhotos()
+            return
+          }
+
           // MOV 格式可能是 LivePhoto，其他视频格式直接识别为视频
           const isMovFile = file.type === 'video/quicktime' || file.name.toLowerCase().endsWith('.mov')
 
@@ -462,6 +528,8 @@ const validateFile = (file: File): { valid: boolean; error?: string } => {
     'image/gif',
     'image/bmp',
     'image/tiff',
+    'image/vnd.radiance',
+    'image/x-exr',
   ]
 
   const allowedVideoTypes = [
@@ -477,7 +545,7 @@ const validateFile = (file: File): { valid: boolean; error?: string } => {
   ]
 
   const videoExtensions = ['.mov', '.mp4', '.avi', '.mkv', '.webm', '.flv', '.wmv', '.m4v', '.3gp', '.mpeg', '.mpg']
-  const imageExtensions = ['.heic', '.heif', '.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.tif']
+  const imageExtensions = ['.heic', '.heif', '.hdr', '.exr', '.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.tif']
 
   const isValidImageType = allowedImageTypes.includes(file.type)
   const isValidVideoType = allowedVideoTypes.includes(file.type)
@@ -518,6 +586,8 @@ const getUploadingFile = (file: File): UploadingFile | undefined => {
 const getFileIcon = (file: File): string => {
   const videoExtensions = ['.mov', '.mp4', '.avi', '.mkv', '.webm', '.flv', '.wmv', '.m4v', '.3gp', '.mpeg', '.mpg']
   const isVideo = file.type.startsWith('video/') || videoExtensions.some(ext => file.name.toLowerCase().endsWith(ext))
+  const panorama = getPanoramaFormatFromName(file.name)
+  if (panorama) return 'tabler:sphere'
   return isVideo ? 'tabler:video' : 'tabler:photo'
 }
 
@@ -867,7 +937,7 @@ onUnmounted(() => {
             icon="tabler:cloud-upload"
             layout="grid"
             size="xl"
-            accept="image/jpeg,image/png,image/heic,image/heif,image/webp,image/gif,image/bmp,image/tiff,video/quicktime,video/mp4,video/x-msvideo,video/x-matroska,video/webm,video/x-flv,video/x-ms-wmv,video/3gpp,video/mpeg,.mov,.mp4,.avi,.mkv,.webm,.flv,.wmv,.m4v,.3gp,.mpeg,.mpg,.heic,.heif"
+            accept="image/jpeg,image/png,image/heic,image/heif,image/webp,image/gif,image/bmp,image/tiff,image/vnd.radiance,image/x-exr,video/quicktime,video/mp4,video/x-msvideo,video/x-matroska,video/webm,video/x-flv,video/x-ms-wmv,video/3gpp,video/mpeg,.hdr,.exr,.mov,.mp4,.avi,.mkv,.webm,.flv,.wmv,.m4v,.3gp,.mpeg,.mpg,.heic,.heif"
             multiple
             highlight
             dropzone

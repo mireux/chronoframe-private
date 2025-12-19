@@ -279,7 +279,7 @@ export const DEFAULT_SETTINGS = [
     namespace: 'upload',
     key: 'mime.whitelist',
     type: 'string',
-    defaultValue: 'image/jpeg,image/png,image/webp,image/gif,image/bmp,image/tiff,image/heic,image/heif,video/quicktime,video/mp4',
+    defaultValue: 'image/jpeg,image/png,image/webp,image/gif,image/bmp,image/tiff,image/heic,image/heif,image/vnd.radiance,image/x-exr,video/quicktime,video/mp4',
     label: 'settings.upload.mime.whitelist.label',
     description: 'settings.upload.mime.whitelist.description',
   },

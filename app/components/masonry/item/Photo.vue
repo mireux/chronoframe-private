@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { formatCameraInfo } from '~/utils/camera'
 import { motion, useDomRef } from 'motion-v'
+import { getPanoramaFormatFromStorageKey } from '~/libs/panorama/format'
 
 interface Props {
   photo: Photo
@@ -44,6 +45,10 @@ const resizeObserverRef = ref<ResizeObserver | null>(null)
 const intersectionObserverRef = ref<IntersectionObserver | null>(null)
 
 const processingState = getProcessingState(props.photo.id)
+
+const panoramaFormat = computed(() => {
+  return getPanoramaFormatFromStorageKey(props.photo.storageKey)
+})
 
 const aspectRatio = computed(() => {
   // Priority 1: Use aspectRatio from photo data if available
@@ -631,6 +636,17 @@ onUnmounted(() => {
           @load="handleImageLoad"
           @error="handleImageError"
         />
+
+        <div
+          v-if="!photo.isVideo && panoramaFormat"
+          class="absolute top-2 right-2 px-2 py-1 bg-black/60 backdrop-blur-sm rounded flex items-center gap-1 text-white text-[10px] font-medium"
+        >
+          <Icon
+            name="tabler:sphere"
+            class="w-3 h-3"
+          />
+          <span class="uppercase">{{ panoramaFormat }}</span>
+        </div>
 
         <!-- Video indicator for video files -->
         <div

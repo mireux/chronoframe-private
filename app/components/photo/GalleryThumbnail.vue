@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { motion } from 'motion-v'
+import { getPanoramaFormatFromStorageKey } from '~/libs/panorama/format'
 
 interface Props {
   photos: Photo[]
@@ -47,6 +48,7 @@ const thumbnailList = computed(() => {
     ...photo,
     index,
     isActive: index === props.currentIndex,
+    panoramaFormat: getPanoramaFormatFromStorageKey(photo.storageKey),
   }))
 })
 
@@ -201,6 +203,17 @@ watch(isMobile, scrollToActiveThumbnail)
         >
           <Icon
             name="tabler:player-play-filled"
+            class="w-3 h-3 text-white"
+          />
+        </div>
+
+        <div
+          v-else-if="photo.panoramaFormat"
+          class="absolute bottom-1 right-1 bg-black/60 backdrop-blur-sm rounded-full p-1 flex items-center justify-center"
+          :title="`Panorama (${photo.panoramaFormat.toUpperCase()})`"
+        >
+          <Icon
+            name="tabler:sphere"
             class="w-3 h-3 text-white"
           />
         </div>

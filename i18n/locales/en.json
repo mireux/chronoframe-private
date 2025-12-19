@@ -36,6 +36,8 @@
           "fileSizeDesc": "File Size (Descending)",
           "titleAsc": "Title (Ascending)",
           "titleDesc": "Title (Descending)",
+          "formatAsc": "Format (Ascending)",
+          "formatDesc": "Format (Descending)",
           "shuffle": "Shuffle"
         }
       },

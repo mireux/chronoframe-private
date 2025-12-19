@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { motion, AnimatePresence } from 'motion-v'
 import { computed, ref, watch, nextTick, onUnmounted } from 'vue'
+import { getPanoramaFormatFromName } from '~/libs/panorama/format'
 
 interface UploadFile {
   file: File
@@ -43,6 +44,10 @@ const emit = defineEmits<{
 
 const fileIcon = computed(() => {
   const file = props.uploadingFile.file
+  const panorama = getPanoramaFormatFromName(file.name)
+  if (panorama) {
+    return 'tabler:sphere'
+  }
   if (file.type.startsWith('image/')) {
     return 'tabler:photo'
   } else if (file.type.startsWith('video/')) {

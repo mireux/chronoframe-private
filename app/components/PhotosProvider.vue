@@ -1,8 +1,9 @@
 <script lang="ts" setup>
 import type { AsyncDataRequestStatus } from '#app'
+import type { DisplayPhoto } from '~/libs/panorama/photo-variants'
 
 const props = defineProps<{
-  photos: Photo[]
+  photos: DisplayPhoto[]
   refresh: () => Promise<void>
   status: AsyncDataRequestStatus
 }>()

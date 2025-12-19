@@ -2,11 +2,12 @@
 import dayjsLocale_zhCN from 'dayjs/locale/zh-cn'
 import dayjsLocale_zhTW from 'dayjs/locale/zh-tw'
 import dayjsLocale_zhHK from 'dayjs/locale/zh-hk'
+import { mergePanoramaPhotoVariants } from '~/libs/panorama/photo-variants'
 
 const router = useRouter()
 const dayjs = useDayjs()
 const colorMode = useColorMode()
-const { locale } = useI18n()
+const { locale } = useI18n({ useScope: 'global' })
 
 // 初始化设置系统 - 一次性加载所有设置
 const settingsStore = useSettingsStore()
@@ -22,7 +23,8 @@ useHead({
 })
 
 const { data, refresh, status } = useFetch('/api/photos')
-const photos = computed(() => (data.value as Photo[]) || [])
+const rawPhotos = computed(() => (data.value as Photo[]) || [])
+const photos = computed(() => mergePanoramaPhotoVariants(rawPhotos.value))
 
 const { switchToIndex, closeViewer, clearReturnRoute } = useViewerState()
 const { currentPhotoIndex, isViewerOpen, returnRoute, isDirectAccess, albumContext } =
