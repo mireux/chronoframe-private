@@ -1,17 +1,10 @@
 services:
   chronoframe:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: chronoframe:local
+    image: kenv1e/chronoframe-private:latest
     container_name: chronoframe
     restart: unless-stopped
     ports:
       - '3000:3000'
     volumes:
       - ./data:/app/data
-    env_file:
-      - .env
-    environment:
-      NUXT_SESSION_PASSWORD: ${NUXT_SESSION_PASSWORD}
 

@@ -32,73 +32,38 @@
 
 ## 🐳 快速部署
 
-### Docker Compose（推荐）
+默认配置下，部署**不需要**传 `.env` 文件或任何环境变量；只要挂载数据目录即可。
 
-使用仓库自带 `docker-compose.yml`（默认本地构建镜像）：
+### Docker（推荐）
+
+```bash
+docker run -d --name chronoframe --restart unless-stopped -p 3000:3000 -v ./data:/app/data ghcr.io/kenv1e/chronoframe-private:latest
+```
+
+访问 `http://localhost:3000` 即可使用。
+
+也可以使用 GHCR 镜像：
+
+```bash
+docker run -d --name chronoframe --restart unless-stopped -p 3000:3000 -v ./data:/app/data ghcr.io/kenv1e/chronoframe-private:latest
+```
+
+> 如需自定义配置项，请参考原项目文档：https://chronoframe.bh8.ga/zh/guide/configuration.html
+
+### Docker Compose
+
+新建 `docker-compose.yml`：
 
 ```yaml
 services:
   chronoframe:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: chronoframe:local
+    image: kenv1e/chronoframe-private:latest
     container_name: chronoframe
     restart: unless-stopped
     ports:
       - '3000:3000'
     volumes:
       - ./data:/app/data
-    env_file:
-      - .env
-```
-
-创建 `.env` 配置文件（最小化配置）：
-
-```bash
-# 管理员配置
-CFRAME_ADMIN_EMAIL=your@email.com
-CFRAME_ADMIN_PASSWORD=your_password
-
-# 地图服务（可选：maplibre/mapbox/amap）
-NUXT_PUBLIC_MAP_PROVIDER=amap
-NUXT_PUBLIC_AMAP_KEY=your_amap_key
-
-# 存储配置
-NUXT_STORAGE_PROVIDER=local
-NUXT_PROVIDER_LOCAL_PATH=/app/data/storage
-
-# 会话密码（32位随机字符串）
-NUXT_SESSION_PASSWORD=your_32_char_random_string
-```
-
-启动服务：
-
-```bash
-docker compose up -d --build
-```
-
-访问 `http://localhost:3000` 即可使用。
-
-> 完整配置项请参考原项目文档：https://chronoframe.bh8.ga/zh/guide/configuration.html
-
-### Docker（不使用 Compose）
-
-构建镜像：
-
-```bash
-docker build -t chronoframe:local .
-```
-
-使用构建的镜像创建并启动容器：
-
-```bash
-docker run -d --name chronoframe --restart unless-stopped -p 3000:3000 --env-file .env.test -v ./data:/app/data chronoframe:local
-
-
-
-docker run -d --name chronoframe --restart unless-stopped -p 3000:3000 --env-file .env -v ./data:/app/data chronoframe:local
-docker run -d --name chronoframe --restart unless-stopped -p 3000:3000  -v ./data:/app/data chronoframe:local
 ```
 
 ## 🛠️ 本地开发
@@ -106,9 +71,6 @@ docker run -d --name chronoframe --restart unless-stopped -p 3000:3000  -v ./dat
 ```bash
 # 安装依赖
 pnpm install
-
-# 配置环境变量
-cp .env.example .env
 
 # 数据库迁移
 pnpm db:migrate
