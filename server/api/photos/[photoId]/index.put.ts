@@ -108,6 +108,180 @@ export default eventHandler(async (event) => {
     }
   }
 
+  const normalizedTitle =
+    payload.title !== undefined ? payload.title.trim() : undefined
+  const normalizedDescription =
+    payload.description !== undefined ? payload.description.trim() : undefined
+  const normalizedTags = normalizeTags(payload.tags)
+  let pendingReverseGeocode: {
+    latitude: number
+    longitude: number
+  } | null = null
+
+  const preservePanoramaExif = (exif: NeededExif | null | undefined) => {
+    if (!exif) return {}
+    const keys: Array<keyof NeededExif> = [
+      'GPanoUsePanoramaViewer',
+      'GPanoProjectionType',
+      'GPanoFullPanoWidthPixels',
+      'GPanoFullPanoHeightPixels',
+      'GPanoCroppedAreaImageWidthPixels',
+      'GPanoCroppedAreaImageHeightPixels',
+      'GPanoCroppedAreaLeftPixels',
+      'GPanoCroppedAreaTopPixels',
+      'PanoramaDetected',
+      'PanoramaConfidence',
+      'PanoramaDetectionMethod',
+      'PanoramaSeamSimilarity',
+    ]
+
+    const out: Partial<NeededExif> = {}
+    for (const key of keys) {
+      const value = exif[key]
+      if (value !== undefined) {
+        out[key] = value
+      }
+    }
+    return out
+  }
+
+  const ext = path.extname(photo.storageKey).toLowerCase()
+  const cannotWriteEmbeddedMetadata = ext === '.hdr' || ext === '.exr'
+
+  if (cannotWriteEmbeddedMetadata) {
+    const updateData: Record<string, any> = {
+      lastModified: new Date().toISOString(),
+    }
+
+    if (payload.isPanorama360 !== undefined) {
+      updateData.isPanorama360 = payload.isPanorama360 ? 1 : 0
+    }
+
+    if (normalizedTitle !== undefined) {
+      updateData.title = normalizedTitle || null
+    }
+
+    if (normalizedDescription !== undefined) {
+      updateData.description = normalizedDescription || null
+    }
+
+    if (normalizedTags !== undefined) {
+      updateData.tags = normalizedTags
+    }
+
+    if (payload.location !== undefined) {
+      if (payload.location) {
+        updateData.latitude = payload.location.latitude
+        updateData.longitude = payload.location.longitude
+        updateData.country = null
+        updateData.city = null
+        updateData.locationName = null
+        pendingReverseGeocode = {
+          latitude: payload.location.latitude,
+          longitude: payload.location.longitude,
+        }
+      } else {
+        updateData.latitude = null
+        updateData.longitude = null
+        updateData.country = null
+        updateData.city = null
+        updateData.locationName = null
+      }
+    }
+
+    const exifPatch: Record<string, unknown> = {
+      ...preservePanoramaExif(photo.exif),
+    }
+
+    if (normalizedTitle !== undefined) {
+      exifPatch.Title = normalizedTitle || null
+      exifPatch.XPTitle = normalizedTitle || null
+    }
+
+    if (normalizedDescription !== undefined) {
+      exifPatch.Description = normalizedDescription || null
+      exifPatch.ImageDescription = normalizedDescription || null
+      exifPatch.CaptionAbstract = normalizedDescription || null
+      exifPatch.XPComment = normalizedDescription || null
+      exifPatch.UserComment = normalizedDescription || null
+    }
+
+    if (normalizedTags !== undefined) {
+      exifPatch.Subject = normalizedTags.length > 0 ? normalizedTags : null
+      exifPatch.Keywords = normalizedTags.length > 0 ? normalizedTags : null
+      exifPatch.XPKeywords = normalizedTags.length > 0 ? normalizedTags.join('; ') : null
+    }
+
+    if (payload.location !== undefined) {
+      if (payload.location) {
+        const { latitude, longitude } = payload.location
+        const latAbs = Math.abs(latitude)
+        const lonAbs = Math.abs(longitude)
+        exifPatch.GPSLatitude = latAbs
+        exifPatch.GPSLatitudeRef = latitude >= 0 ? 'N' : 'S'
+        exifPatch.GPSLongitude = lonAbs
+        exifPatch.GPSLongitudeRef = longitude >= 0 ? 'E' : 'W'
+        exifPatch.GPSPosition = `${latitude} ${longitude}`
+      } else {
+        exifPatch.GPSLatitude = null
+        exifPatch.GPSLatitudeRef = null
+        exifPatch.GPSLongitude = null
+        exifPatch.GPSLongitudeRef = null
+        exifPatch.GPSPosition = null
+      }
+    }
+
+    if (payload.rating !== undefined) {
+      exifPatch.Rating = payload.rating !== null ? payload.rating : null
+    }
+
+    const mergedExif = {
+      ...(photo.exif ?? {}),
+      ...exifPatch,
+    }
+    updateData.exif = Object.keys(mergedExif).length > 0 ? mergedExif : null
+
+    await db
+      .update(tables.photos)
+      .set(updateData)
+      .where(eq(tables.photos.id, photoId))
+
+    const updated = await db
+      .select()
+      .from(tables.photos)
+      .where(eq(tables.photos.id, photoId))
+      .get()
+
+    if (pendingReverseGeocode) {
+      const workerPool = globalThis.__workerPool
+      if (workerPool) {
+        try {
+          await workerPool.addTask(
+            {
+              type: 'photo-reverse-geocoding',
+              photoId,
+              latitude: pendingReverseGeocode.latitude,
+              longitude: pendingReverseGeocode.longitude,
+            },
+            {
+              priority: 1,
+            },
+          )
+        } catch (taskError) {
+          logger.location.warn(
+            `Failed to enqueue reverse geocoding for photo ${photoId}:`,
+            taskError,
+          )
+        }
+      }
+    }
+
+    return {
+      success: true,
+      photo: updated ? withUrls(updated) : null,
+    }
+  }
+
   const onlyPanoramaFlagUpdate =
     payload.isPanorama360 !== undefined &&
     payload.title === undefined &&
@@ -145,16 +319,6 @@ export default eventHandler(async (event) => {
       statusMessage: t('dashboard.photos.messages.photoFileMissing'),
     })
   }
-
-  const normalizedTitle =
-    payload.title !== undefined ? payload.title.trim() : undefined
-  const normalizedDescription =
-    payload.description !== undefined ? payload.description.trim() : undefined
-  const normalizedTags = normalizeTags(payload.tags)
-  let pendingReverseGeocode: {
-    latitude: number
-    longitude: number
-  } | null = null
 
   const exifUpdates: Record<string, any> = {}
 
@@ -205,36 +369,8 @@ export default eventHandler(async (event) => {
     exifUpdates.Rating = payload.rating !== null ? payload.rating : null
   }
 
-  const preservePanoramaExif = (exif: NeededExif | null | undefined) => {
-    if (!exif) return {}
-    const keys: Array<keyof NeededExif> = [
-      'GPanoUsePanoramaViewer',
-      'GPanoProjectionType',
-      'GPanoFullPanoWidthPixels',
-      'GPanoFullPanoHeightPixels',
-      'GPanoCroppedAreaImageWidthPixels',
-      'GPanoCroppedAreaImageHeightPixels',
-      'GPanoCroppedAreaLeftPixels',
-      'GPanoCroppedAreaTopPixels',
-      'PanoramaDetected',
-      'PanoramaConfidence',
-      'PanoramaDetectionMethod',
-      'PanoramaSeamSimilarity',
-    ]
-
-    const out: Partial<NeededExif> = {}
-    for (const key of keys) {
-      const value = exif[key]
-      if (value !== undefined) {
-        out[key] = value
-      }
-    }
-    return out
-  }
-
   const tempDir = await mkdtemp(path.join(tmpdir(), 'cframe-edit-'))
-  const ext = path.extname(photo.storageKey) || '.jpg'
-  const tempFile = path.join(tempDir, `edited${ext}`)
+  const tempFile = path.join(tempDir, `edited${ext || '.jpg'}`)
 
   try {
     await writeFile(tempFile, originalBuffer)

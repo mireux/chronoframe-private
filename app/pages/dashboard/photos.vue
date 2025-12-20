@@ -8,6 +8,7 @@ import {
   getPanoramaFormatFromName,
   getUploadContentTypeForPanorama,
   getPanoramaFormatFromStorageKey,
+  isPanoramaByXmp,
 } from '~/libs/panorama/format'
 import { createPanoramaThumbnail } from '~/libs/panorama/thumbnail'
 import { buildUploadAccept, UPLOAD_ACCEPT_WHEN_WHITELIST_DISABLED } from '~/libs/upload-accept'
@@ -1034,6 +1035,8 @@ const columns: TableColumn<Photo>[] = [
       const photoId = row.original.id
       const photoAlbums = photoToAlbumsMap.value.get(photoId)
       const panoramaFormat = getPanoramaFormatFromStorageKey(row.original.storageKey)
+      const isPanorama360 =
+        row.original.isPanorama360 === 1 || isPanoramaByXmp(row.original.exif)
 
       const isInHiddenAlbum = photoAlbums?.some(albumId => {
         const album = albums.value?.find(a => a.id === albumId)
@@ -1050,12 +1053,12 @@ const columns: TableColumn<Photo>[] = [
           onClick: () => openImagePreview(row.original),
           style: { cursor: url ? 'pointer' : 'default' },
         }),
-        panoramaFormat ? h('div', {
+        panoramaFormat || isPanorama360 ? h('div', {
           class: 'absolute bottom-0.5 right-0.5 rounded px-1 py-0.5 flex items-center gap-1 text-white text-[10px] font-medium',
           style: { backgroundColor: 'rgba(0,0,0,0.6)' }
         }, [
           h(Icon, { name: 'tabler:sphere', class: 'w-3 h-3' }),
-          h('span', { class: 'uppercase' }, panoramaFormat)
+          h('span', { class: panoramaFormat ? 'uppercase' : '' }, panoramaFormat ?? '360')
         ]) : null,
         isInHiddenAlbum ? h('div', {
           class: 'absolute top-0.5 right-0.5 rounded-full p-0.5 flex items-center justify-center',
