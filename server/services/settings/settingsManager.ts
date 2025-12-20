@@ -149,13 +149,14 @@ export class SettingsManager {
 
       if (!existing) {
         // If not exists, insert it
+        const serializedDefaultValue = this.serialize(config.defaultValue)
         db.insert(tables.settings)
           .values({
             namespace: config.namespace,
             key: config.key,
             type: config.type,
-            value: this.serialize(config.defaultValue),
-            defaultValue: this.serialize(config.defaultValue),
+            value: serializedDefaultValue,
+            defaultValue: serializedDefaultValue,
             label: config.label,
             description: config.description,
             isPublic: config.isPublic,
@@ -165,19 +166,24 @@ export class SettingsManager {
           })
           .run()
       } else {
+        const serializedDefaultValue = this.serialize(config.defaultValue)
+        const shouldUpdateValue = existing.value === existing.defaultValue
+        const setValues: Partial<typeof tables.settings.$inferInsert> = {
+          type: config.type,
+          defaultValue: serializedDefaultValue,
+          label: config.label,
+          description: config.description,
+          isPublic: config.isPublic,
+          isReadonly: config.isReadonly,
+          isSecret: config.isSecret,
+          enum: config.enum ? config.enum : null,
+          updatedAt: new Date(),
+        }
+        if (shouldUpdateValue) setValues.value = serializedDefaultValue
+
         // If exists, update metadata fields (enum, label, description, etc.)
         db.update(tables.settings)
-          .set({
-            type: config.type,
-            defaultValue: this.serialize(config.defaultValue),
-            label: config.label,
-            description: config.description,
-            isPublic: config.isPublic,
-            isReadonly: config.isReadonly,
-            isSecret: config.isSecret,
-            enum: config.enum ? config.enum : null,
-            updatedAt: new Date(),
-          })
+          .set(setValues)
           .where(
             and(
               eq(tables.settings.namespace, config.namespace),

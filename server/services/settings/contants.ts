@@ -274,6 +274,7 @@ export const DEFAULT_SETTINGS = [
     defaultValue: true,
     label: 'settings.upload.mime.whitelistEnabled.label',
     description: 'settings.upload.mime.whitelistEnabled.description',
+    isPublic: true,
   },
   {
     namespace: 'upload',
@@ -282,6 +283,7 @@ export const DEFAULT_SETTINGS = [
     defaultValue: 'image/jpeg,image/png,image/webp,image/gif,image/bmp,image/tiff,image/heic,image/heif,image/vnd.radiance,image/x-exr,video/quicktime,video/mp4',
     label: 'settings.upload.mime.whitelist.label',
     description: 'settings.upload.mime.whitelist.description',
+    isPublic: true,
   },
   {
     namespace: 'upload',

@@ -5,6 +5,7 @@ import {
   getUploadContentTypeForPanorama,
 } from '~/libs/panorama/format'
 import { createPanoramaThumbnail } from '~/libs/panorama/thumbnail'
+import { buildUploadAccept, UPLOAD_ACCEPT_WHEN_WHITELIST_DISABLED } from '~/libs/upload-accept'
 
 interface UploadingFile {
   file: File
@@ -60,6 +61,8 @@ const emit = defineEmits<{
 }>()
 
 const maxFileSizeMbSetting = useSettingRef('storage:upload.maxSizeMb')
+const uploadMimeWhitelistEnabled = useSettingRef('upload:mime.whitelistEnabled')
+const uploadMimeWhitelist = useSettingRef('upload:mime.whitelist')
 const MAX_FILE_SIZE = computed(() => {
   const value = maxFileSizeMbSetting.value
   if (typeof value === 'number') return value
@@ -68,6 +71,14 @@ const MAX_FILE_SIZE = computed(() => {
     if (Number.isFinite(parsed) && parsed > 0) return parsed
   }
   return 512
+})
+
+const uploadAccept = computed(() => {
+  const enabled = uploadMimeWhitelistEnabled.value
+  if (enabled === false) return UPLOAD_ACCEPT_WHEN_WHITELIST_DISABLED
+  const whitelist = uploadMimeWhitelist.value
+  const accept = buildUploadAccept(typeof whitelist === 'string' ? whitelist : null)
+  return accept || UPLOAD_ACCEPT_WHEN_WHITELIST_DISABLED
 })
 
 const dayjs = useDayjs()
@@ -937,7 +948,7 @@ onUnmounted(() => {
             icon="tabler:cloud-upload"
             layout="grid"
             size="xl"
-            accept="image/jpeg,image/png,image/heic,image/heif,image/webp,image/gif,image/bmp,image/tiff,image/vnd.radiance,image/x-exr,video/quicktime,video/mp4,video/x-msvideo,video/x-matroska,video/webm,video/x-flv,video/x-ms-wmv,video/3gpp,video/mpeg,.hdr,.exr,.mov,.mp4,.avi,.mkv,.webm,.flv,.wmv,.m4v,.3gp,.mpeg,.mpg,.heic,.heif"
+            :accept="uploadAccept"
             multiple
             highlight
             dropzone
