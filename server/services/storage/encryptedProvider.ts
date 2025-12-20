@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import { PassThrough } from 'node:stream'
 import type { Readable } from 'node:stream'
-import type { StorageObject, StorageProvider, UploadOptions } from './interfaces'
+import type { StorageObject, StorageProvider, StorageReadStream, UploadOptions } from './interfaces'
 import { settingsManager } from '~~/server/services/settings/settingsManager'
 import {
   decryptBuffer,
@@ -62,6 +62,117 @@ const createEncryptedStream = (
     overheadBytes:
       ENCRYPTION_MAGIC.length + ENCRYPTION_IV_LENGTH + ENCRYPTION_TAG_LENGTH,
   }
+}
+
+const decryptStream = (source: Readable, encryptionKey: Buffer | null): Readable => {
+  const out = new PassThrough()
+
+  source.on('error', (err) => out.destroy(err))
+  out.on('close', () => {
+    if (!source.destroyed) source.destroy()
+  })
+
+  const headerLength = ENCRYPTION_MAGIC.length + ENCRYPTION_IV_LENGTH
+
+  const pump = async () => {
+    let header = Buffer.alloc(0)
+    let mode: 'unknown' | 'passthrough' | 'decrypt' = 'unknown'
+
+    const asBuffer = (chunk: unknown): Buffer => {
+      if (Buffer.isBuffer(chunk)) return chunk
+      if (chunk instanceof Uint8Array) return Buffer.from(chunk)
+      return Buffer.from(String(chunk))
+    }
+
+    let decipher: crypto.DecipherGCM | null = null
+    let tail = Buffer.alloc(0)
+
+    for await (const chunk of source) {
+      const buf = asBuffer(chunk)
+
+      if (mode === 'unknown') {
+        const need = headerLength - header.length
+        const take = buf.subarray(0, need)
+        header = Buffer.concat([header, take])
+        const rest = buf.subarray(take.length)
+
+        if (header.length < headerLength) {
+          continue
+        }
+
+        const isEncrypted = header.subarray(0, ENCRYPTION_MAGIC.length).equals(ENCRYPTION_MAGIC)
+        if (!isEncrypted) {
+          mode = 'passthrough'
+          out.write(header)
+          if (rest.length > 0) out.write(rest)
+          header = Buffer.alloc(0)
+          continue
+        }
+
+        if (!encryptionKey) {
+          throw new Error('Encrypted object found but encryption key is not set')
+        }
+
+        const iv = header.subarray(ENCRYPTION_MAGIC.length, headerLength)
+        decipher = crypto.createDecipheriv('aes-256-gcm', encryptionKey, iv)
+        mode = 'decrypt'
+        header = Buffer.alloc(0)
+
+        if (rest.length === 0) continue
+        const data = Buffer.concat([tail, rest])
+        if (data.length <= ENCRYPTION_TAG_LENGTH) {
+          tail = data
+          continue
+        }
+        const process = data.subarray(0, data.length - ENCRYPTION_TAG_LENGTH)
+        tail = data.subarray(data.length - ENCRYPTION_TAG_LENGTH)
+        const outChunk = decipher.update(process)
+        if (outChunk.length > 0) out.write(outChunk)
+        continue
+      }
+
+      if (mode === 'passthrough') {
+        out.write(buf)
+        continue
+      }
+
+      if (!decipher) {
+        throw new Error('decryptStream: missing decipher')
+      }
+
+      const data = Buffer.concat([tail, buf])
+      if (data.length <= ENCRYPTION_TAG_LENGTH) {
+        tail = data
+        continue
+      }
+      const process = data.subarray(0, data.length - ENCRYPTION_TAG_LENGTH)
+      tail = data.subarray(data.length - ENCRYPTION_TAG_LENGTH)
+      const outChunk = decipher.update(process)
+      if (outChunk.length > 0) out.write(outChunk)
+    }
+
+    if (mode === 'unknown' || mode === 'passthrough') {
+      if (header.length > 0) out.write(header)
+      out.end()
+      return
+    }
+
+    if (!decipher) {
+      throw new Error('decryptStream: missing decipher')
+    }
+
+    if (tail.length !== ENCRYPTION_TAG_LENGTH) {
+      throw new Error('Encrypted payload is too short')
+    }
+
+    decipher.setAuthTag(tail)
+    const final = decipher.final()
+    if (final.length > 0) out.write(final)
+    out.end()
+  }
+
+  pump().catch((err) => out.destroy(err))
+  return out
 }
 
 export class EncryptedStorageProvider implements StorageProvider {
@@ -221,6 +332,16 @@ export class EncryptedStorageProvider implements StorageProvider {
       throw new Error('Encrypted object found but encryption key is not set')
     }
     return decryptBuffer(payload, encryptionKey)
+  }
+
+  async getStream(key: string): Promise<StorageReadStream | null> {
+    if (!this.inner.getStream) return null
+    const resp = await this.inner.getStream(key)
+    if (!resp) return null
+
+    const rawKey = await settingsManager.get<string>('storage', 'encryption.key')
+    const encryptionKey = rawKey ? deriveAes256Key(rawKey) : null
+    return { stream: decryptStream(resp.stream, encryptionKey) }
   }
 
   getPublicUrl(key: string): string {

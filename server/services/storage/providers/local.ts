@@ -1,4 +1,4 @@
-import { createWriteStream, promises as fs } from 'node:fs'
+import { createReadStream, createWriteStream, promises as fs, type Stats } from 'node:fs'
 import path from 'node:path'
 import type { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -6,10 +6,65 @@ import type {
   LocalStorageConfig,
   StorageObject,
   StorageProvider,
+  StorageReadStream,
 } from '../interfaces'
 
 const ensureDir = async (dirPath: string) => {
   await fs.mkdir(dirPath, { recursive: true })
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+const getErrnoCode = (err: unknown): string | undefined => {
+  if (!err || typeof err !== 'object') return
+  if (!('code' in err)) return
+  const code = (err as { code?: unknown }).code
+  return typeof code === 'string' ? code : undefined
+}
+
+const isRetryableFsError = (err: unknown): boolean => {
+  if (process.platform !== 'win32') return false
+  const code = getErrnoCode(err)
+  return code === 'EPERM' || code === 'EACCES' || code === 'EBUSY'
+}
+
+const retryFsOp = async <T>(
+  op: () => Promise<T>,
+  retries: number,
+  baseDelayMs: number,
+  maxDelayMs: number,
+): Promise<T> => {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      return await op()
+    } catch (err) {
+      if (!isRetryableFsError(err) || attempt >= retries - 1) {
+        throw err
+      }
+      const delay = Math.min(maxDelayMs, baseDelayMs * 2 ** attempt)
+      await sleep(delay)
+    }
+  }
+  throw new Error('retryFsOp: unreachable')
+}
+
+const renameWithReplace = async (from: string, to: string): Promise<void> => {
+  try {
+    await fs.rename(from, to)
+  } catch (err) {
+    if (process.platform !== 'win32') throw err
+
+    const code = getErrnoCode(err)
+    if (code !== 'EPERM' && code !== 'EACCES' && code !== 'EEXIST') throw err
+
+    try {
+      await fs.unlink(to)
+    } catch (unlinkErr) {
+      if (getErrnoCode(unlinkErr) !== 'ENOENT') throw unlinkErr
+    }
+
+    await fs.rename(from, to)
+  }
 }
 
 const sanitizeKey = (key: string) => key.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/^\/+/, '')
@@ -43,51 +98,31 @@ export class LocalStorageProvider implements StorageProvider {
     await ensureDir(path.dirname(absFile))
 
     const tempFile = `${absFile}.tmp-${Date.now()}`
-    let retries = 3
 
-    while (retries > 0) {
-      try {
-        await fs.writeFile(tempFile, fileBuffer)
-
-        try {
-          await fs.rename(tempFile, absFile)
-          break
-        } catch (renameErr) {
-          const error = renameErr as NodeJS.ErrnoException
-          if (error.code === 'EPERM' && retries > 1) {
-            await new Promise(resolve => setTimeout(resolve, 300))
-            retries--
-            continue
-          }
-
-          try {
-            await fs.unlink(tempFile)
-          } catch {
-            // ignore cleanup errors
-          }
-          throw renameErr
-        }
-      } catch (err) {
-        if (retries === 1) throw err
-        retries--
-        await new Promise(resolve => setTimeout(resolve, 300))
-      }
+    try {
+      await retryFsOp(() => fs.writeFile(tempFile, fileBuffer), 3, 200, 1000)
+      await retryFsOp(() => renameWithReplace(tempFile, absFile), 60, 200, 2000)
+    } catch (err) {
+      await fs.unlink(tempFile).catch(() => {})
+      throw err
     }
 
-    await new Promise(resolve => setTimeout(resolve, 150))
-
-    const stat = await fs.stat(absFile)
+    await sleep(150)
+    const stat = await retryFsOp(() => fs.stat(absFile), 5, 100, 1000).catch(() => null)
     this.logger?.success?.(`Saved file: ${absFile}`)
     return {
       key: relKey,
-      size: stat.size,
-      lastModified: stat.mtime,
+      size: stat?.size ?? fileBuffer.length,
+      lastModified: stat?.mtime ?? new Date(),
     }
   }
 
   async createFromStream(
     key: string,
     stream: Readable,
+    contentLength: number | null,
+    _contentType?: string,
+    _skipEncryption?: boolean,
   ): Promise<StorageObject> {
     const { absFile, relKey } = this.resolveAbsoluteKey(key)
     await ensureDir(path.dirname(absFile))
@@ -97,58 +132,50 @@ export class LocalStorageProvider implements StorageProvider {
     try {
       await pipeline(stream, createWriteStream(tempFile))
 
-      let retries = 3
-      while (retries > 0) {
-        try {
-          await fs.rename(tempFile, absFile)
-          break
-        } catch (renameErr) {
-          const error = renameErr as NodeJS.ErrnoException
-          if (error.code === 'EPERM' && retries > 1) {
-            await new Promise((resolve) => setTimeout(resolve, 300))
-            retries--
-            continue
-          }
-          throw renameErr
-        }
-      }
+      await retryFsOp(() => renameWithReplace(tempFile, absFile), 60, 200, 2000)
     } catch (err) {
-      try {
-        await fs.unlink(tempFile)
-      } catch {
-        // ignore cleanup errors
-      }
+      await fs.unlink(tempFile).catch(() => {})
       throw err
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 150))
-
-    const stat = await fs.stat(absFile)
+    await sleep(150)
+    const stat = await retryFsOp(() => fs.stat(absFile), 5, 100, 1000).catch(() => null)
     this.logger?.success?.(`Saved file: ${absFile}`)
     return {
       key: relKey,
-      size: stat.size,
-      lastModified: stat.mtime,
+      size: stat?.size ?? (contentLength ?? undefined),
+      lastModified: stat?.mtime ?? new Date(),
     }
   }
 
   async delete(key: string): Promise<void> {
     const { absFile } = this.resolveAbsoluteKey(key)
     try {
-      await fs.unlink(absFile)
+      await retryFsOp(() => fs.unlink(absFile), 10, 200, 2000)
       this.logger?.success?.(`Deleted file: ${absFile}`)
     } catch (err) {
-      // ignore if not exists
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+      if (getErrnoCode(err) !== 'ENOENT') throw err
     }
   }
 
   async get(key: string): Promise<Buffer | null> {
     const { absFile } = this.resolveAbsoluteKey(key)
     try {
-      return await fs.readFile(absFile)
+      return await retryFsOp(() => fs.readFile(absFile), 10, 200, 2000)
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
+      if (getErrnoCode(err) === 'ENOENT') return null
+      throw err
+    }
+  }
+
+  async getStream(key: string): Promise<StorageReadStream | null> {
+    const { absFile } = this.resolveAbsoluteKey(key)
+    try {
+      const stat = await retryFsOp(() => fs.stat(absFile), 10, 200, 2000)
+      if (!stat.isFile()) return null
+      return { stream: createReadStream(absFile), size: stat.size }
+    } catch (err) {
+      if (getErrnoCode(err) === 'ENOENT') return null
       throw err
     }
   }
@@ -173,8 +200,12 @@ export class LocalStorageProvider implements StorageProvider {
         if (entry.isDirectory()) {
           await walk(abs, rel)
         } else if (entry.isFile()) {
-          const stat = await fs.stat(abs)
-          results.push({ key: rel, size: stat.size, lastModified: stat.mtime })
+          try {
+            const stat = await retryFsOp(() => fs.stat(abs), 5, 100, 1000)
+            results.push({ key: rel, size: stat.size, lastModified: stat.mtime })
+          } catch {
+            continue
+          }
         }
       }
     }
@@ -190,34 +221,22 @@ export class LocalStorageProvider implements StorageProvider {
   }
 
   async getFileMeta(key: string): Promise<StorageObject | null> {
-    const tryGetStat = async (filePath: string, retries = 3): Promise<any> => {
-      for (let i = 0; i < retries; i++) {
-        try {
-          return await fs.stat(filePath)
-        } catch (err) {
-          const error = err as NodeJS.ErrnoException
-          if (error.code === 'ENOENT') {
-            return null
-          }
-          if (error.code === 'EPERM' && i < retries - 1) {
-            // Windows 文件权限问题，等待后重试
-            await new Promise(resolve => setTimeout(resolve, 200 * (i + 1)))
-            continue
-          }
-          throw err
-        }
+    const tryGetStat = async (filePath: string): Promise<Stats | null> => {
+      try {
+        return await retryFsOp(() => fs.stat(filePath), 10, 200, 2000)
+      } catch (err) {
+        if (getErrnoCode(err) === 'ENOENT') return null
+        if (isRetryableFsError(err)) return null
+        throw err
       }
-      return null
     }
 
-    // First try with combined prefix
     const { absFile, relKey } = this.resolveAbsoluteKey(key)
     const stat1 = await tryGetStat(absFile)
     if (stat1 && stat1.isFile()) {
       return { key: relKey, size: stat1.size, lastModified: stat1.mtime }
     }
 
-    // Fallback: try without adding prefix (in case key already contains it or was stored raw)
     const rawRel = sanitizeKey(key)
     const rawAbs = path.resolve(this.config.basePath, rawRel)
     const stat2 = await tryGetStat(rawAbs)

@@ -70,7 +70,16 @@ export default eventHandler(async (event) => {
   }
 
   try {
-    const objectKey = `${(storageProvider.config?.prefix || '').replace(/\/+$/, '')}/${fileName}`
+    const normalizedPrefix = (storageProvider.config?.prefix || '')
+      .replace(/\\/g, '/')
+      .replace(/\/+/g, '/')
+      .replace(/^\/+/, '')
+      .replace(/\/+$/, '')
+    const normalizedFileName = fileName
+      .replace(/\\/g, '/')
+      .replace(/\/+/g, '/')
+      .replace(/^\/+/, '')
+    const objectKey = normalizedPrefix ? `${normalizedPrefix}/${normalizedFileName}` : normalizedFileName
 
     // 重复文件检测
     const duplicateCheckEnabledSetting =

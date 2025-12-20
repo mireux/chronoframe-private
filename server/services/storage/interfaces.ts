@@ -15,6 +15,11 @@ export interface UploadOptions {
   ttl?: number
 }
 
+export interface StorageReadStream {
+  stream: Readable
+  size?: number
+}
+
 export interface StorageProvider {
   config?: StorageConfig
   create(
@@ -32,6 +37,7 @@ export interface StorageProvider {
   ): Promise<StorageObject>
   delete(key: string): Promise<void>
   get(key: string): Promise<Buffer | null>
+  getStream?(key: string): Promise<StorageReadStream | null>
   getPublicUrl(key: string): string
   getSignedUrl?(
     key: string,

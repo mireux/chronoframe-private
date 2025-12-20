@@ -23,6 +23,7 @@ const props = withDefaults(defineProps<Props>(), {
 const videoRef = ref<HTMLVideoElement>()
 const isPlaying = ref(false)
 const isLoading = ref(true)
+const isBuffering = ref(false)
 const hasError = ref(false)
 const showControls = ref(true)
 const currentTime = ref(0)
@@ -63,10 +64,27 @@ const togglePlay = () => {
 
 const handlePlay = () => {
   isPlaying.value = true
+  isBuffering.value = false
 }
 
 const handlePause = () => {
   isPlaying.value = false
+}
+
+const handleWaiting = () => {
+  isBuffering.value = true
+}
+
+const handleSeeking = () => {
+  isBuffering.value = true
+}
+
+const handleCanPlay = () => {
+  isBuffering.value = false
+}
+
+const handleSeeked = () => {
+  isBuffering.value = false
 }
 
 const handleTimeUpdate = () => {
@@ -83,6 +101,7 @@ const handleLoadedMetadata = () => {
 const handleError = () => {
   hasError.value = true
   isLoading.value = false
+  isBuffering.value = false
 }
 
 const handleEnded = () => {
@@ -96,6 +115,7 @@ const seek = (event: MouseEvent) => {
   if (!videoRef.value) return
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
   const pos = (event.clientX - rect.left) / rect.width
+  isBuffering.value = true
   videoRef.value.currentTime = pos * duration.value
 }
 
@@ -178,6 +198,10 @@ onUnmounted(() => {
       playsinline
       @play="handlePlay"
       @pause="handlePause"
+      @waiting="handleWaiting"
+      @seeking="handleSeeking"
+      @seeked="handleSeeked"
+      @canplay="handleCanPlay"
       @timeupdate="handleTimeUpdate"
       @loadedmetadata="handleLoadedMetadata"
       @error="handleError"
@@ -186,7 +210,7 @@ onUnmounted(() => {
     />
 
     <div
-      v-if="isLoading"
+      v-if="isLoading || isBuffering"
       class="absolute inset-0 flex items-center justify-center bg-black/50"
     >
       <Icon

@@ -31,6 +31,18 @@ class NonRetryableError extends Error {
   }
 }
 
+const getErrnoCode = (error: unknown): string | undefined => {
+  if (!error || typeof error !== 'object') return
+  if (!('code' in error)) return
+  const code = (error as { code?: unknown }).code
+  return typeof code === 'string' ? code : undefined
+}
+
+const isWindowsFileAccessErrorCode = (code: string | undefined): boolean => {
+  if (process.platform !== 'win32') return false
+  return code === 'EPERM' || code === 'EACCES' || code === 'EBUSY'
+}
+
 export class QueueManager {
   private static instances: Map<string, QueueManager> = new Map()
   private workerId: string
@@ -192,7 +204,12 @@ export class QueueManager {
    * @param errorMessage 错误信息
    * @param isRetryable 是否可重试
    */
-  async markTaskFailed(taskId: number, errorMessage?: string, isRetryable: boolean = true): Promise<void> {
+  async markTaskFailed(
+    taskId: number,
+    errorMessage: string | undefined,
+    isRetryable: boolean = true,
+    errorCode?: string,
+  ): Promise<void> {
     const db = useDB()
     const task = await db
       .select()
@@ -203,10 +220,16 @@ export class QueueManager {
     if (!task) return
 
     const newAttempts = task.attempts + 1
-    const shouldRetry = isRetryable && newAttempts < task.maxAttempts
+    const targetMaxAttempts = isRetryable && isWindowsFileAccessErrorCode(errorCode)
+      ? Math.max(task.maxAttempts, 20)
+      : task.maxAttempts
+    const shouldRetry = isRetryable && newAttempts < targetMaxAttempts
 
     const retryDelay = shouldRetry
-      ? Math.min(1000 * Math.pow(2, newAttempts - 1), 30000)
+      ? Math.min(
+          1000 * Math.pow(2, newAttempts - 1),
+          isWindowsFileAccessErrorCode(errorCode) ? 60000 : 30000,
+        )
       : 0
 
     await db
@@ -214,6 +237,7 @@ export class QueueManager {
       .set({
         status: shouldRetry ? 'pending' : 'failed',
         attempts: newAttempts,
+        maxAttempts: targetMaxAttempts,
         errorMessage: errorMessage || 'Unknown error',
         ...(shouldRetry && retryDelay > 0
           ? {
@@ -225,7 +249,7 @@ export class QueueManager {
 
     if (shouldRetry) {
       this.logger.warn(
-        `任务 ${taskId} 失败（第 ${newAttempts} 次尝试，共 ${task.maxAttempts} 次），将在 ${retryDelay} 毫秒后重试：${errorMessage}`,
+        `任务 ${taskId} 失败（第 ${newAttempts} 次尝试，共 ${targetMaxAttempts} 次），将在 ${retryDelay} 毫秒后重试：${errorMessage}`,
       )
     } else {
       this.logger.error(
@@ -978,8 +1002,9 @@ export class QueueManager {
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : String(error)
+        const errorCode = getErrnoCode(error)
         const isRetryable = !(error instanceof NonRetryableError)
-        await this.markTaskFailed(task.id, errorMessage, isRetryable)
+        await this.markTaskFailed(task.id, errorMessage, isRetryable, errorCode)
         this.errorCount++
         this.logger.error(
           `[${this.workerId}] 任务 ${task.id} 处理失败（错误：${this.errorCount}）：`,

@@ -3,6 +3,7 @@ import type { _Object, S3ClientConfig } from '@aws-sdk/client-s3'
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   ListObjectsCommand,
   PutObjectCommand,
   S3Client,
@@ -11,6 +12,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import type {
   StorageObject,
   StorageProvider,
+  StorageReadStream,
   UploadOptions,
 } from '../interfaces'
 
@@ -69,6 +71,13 @@ const getHttpStatusCode = (error: unknown): number | undefined => {
   return typeof httpStatusCode === 'number' ? httpStatusCode : undefined
 }
 
+const isNodeReadableStream = (value: unknown): value is NodeJS.ReadableStream => {
+  if (typeof value !== 'object' || value === null) return false
+  if (!('pipe' in value)) return false
+  const pipe = (value as { pipe?: unknown }).pipe
+  return typeof pipe === 'function'
+}
+
 const createClient = (config: S3StorageConfig): S3Client => {
   if (config.provider !== 's3') {
     throw new Error('Invalid provider for S3 client creation')
@@ -120,13 +129,17 @@ export class S3StorageProvider implements StorageProvider {
     this.client = createClient(config)
   }
 
+  private resolveKey(key: string): string {
+    return combinePrefixAndKey(this.config.prefix, key)
+  }
+
   async create(
     key: string,
     data: Buffer,
     contentType?: string,
   ): Promise<StorageObject> {
     try {
-      const absoluteKey = combinePrefixAndKey(this.config.prefix, key)
+      const absoluteKey = this.resolveKey(key)
       const cmd = new PutObjectCommand({
         Bucket: this.config.bucket,
         Key: absoluteKey,
@@ -152,13 +165,14 @@ export class S3StorageProvider implements StorageProvider {
 
   async delete(key: string): Promise<void> {
     try {
+      const absoluteKey = this.resolveKey(key)
       const cmd = new DeleteObjectCommand({
         Bucket: this.config.bucket,
-        Key: key,
+        Key: absoluteKey,
       })
 
       await this.client.send(cmd)
-      this.logger?.success(`Deleted object with key: ${key}`)
+      this.logger?.success(`Deleted object with key: ${absoluteKey}`)
     } catch (error) {
       this.logger?.error(`Failed to delete object with key: ${key}`, error)
       throw error
@@ -167,9 +181,10 @@ export class S3StorageProvider implements StorageProvider {
 
   async get(key: string): Promise<Buffer | null> {
     try {
+      const absoluteKey = this.resolveKey(key)
       const cmd = new GetObjectCommand({
         Bucket: this.config.bucket,
-        Key: key,
+        Key: absoluteKey,
       })
 
       const resp = await this.client.send(cmd)
@@ -203,19 +218,40 @@ export class S3StorageProvider implements StorageProvider {
     }
   }
 
+  async getStream(key: string): Promise<StorageReadStream | null> {
+    const absoluteKey = this.resolveKey(key)
+    const cmd = new GetObjectCommand({
+      Bucket: this.config.bucket,
+      Key: absoluteKey,
+    })
+
+    try {
+      const resp = await this.client.send(cmd)
+      if (!resp.Body) return null
+      if (!isNodeReadableStream(resp.Body)) return null
+      return {
+        stream: resp.Body,
+        size: resp.ContentLength ?? undefined,
+      }
+    } catch {
+      return null
+    }
+  }
+
   getPublicUrl(key: string): string {
     const { cdnUrl, bucket, region, endpoint } = this.config
+    const absoluteKey = this.resolveKey(key)
 
     // CDN URL
     if (cdnUrl) {
-      return `${cdnUrl.replace(/\/$/, '')}/${key}`
+      return `${cdnUrl.replace(/\/$/, '')}/${absoluteKey}`
     }
 
     // Default AWS S3 endpoint
     if (!endpoint) {
-      return `https://${bucket}.s3.${region}.amazonaws.com/${key}`
+      return `https://${bucket}.s3.${region}.amazonaws.com/${absoluteKey}`
     } else if (endpoint.includes('amazonaws.com')) {
-      return `https://${bucket}.s3.${region}.amazonaws.com/${key}`
+      return `https://${bucket}.s3.${region}.amazonaws.com/${absoluteKey}`
     }
 
     // Alibaba Cloud OSS
@@ -226,11 +262,11 @@ export class S3StorageProvider implements StorageProvider {
       }
       const protocol = baseUrl.split('//')[0]
       const remainder = baseUrl.split('//')[1]
-      return `${protocol}//${bucket}.${remainder}/${key}`
+      return `${protocol}//${bucket}.${remainder}/${absoluteKey}`
     }
 
     // Custom endpoint
-    return `${endpoint.replace(/\/$/, '')}/${bucket}/${key}`
+    return `${endpoint.replace(/\/$/, '')}/${bucket}/${absoluteKey}`
   }
 
   async getSignedUrl(
@@ -238,9 +274,10 @@ export class S3StorageProvider implements StorageProvider {
     expiresIn: number = 3600,
     options?: UploadOptions,
   ): Promise<string> {
+    const absoluteKey = this.resolveKey(key)
     const cmd = new PutObjectCommand({
       Bucket: this.config.bucket,
-      Key: key,
+      Key: absoluteKey,
       ContentType: options?.contentType || 'application/octet-stream',
     })
 
@@ -254,9 +291,10 @@ export class S3StorageProvider implements StorageProvider {
 
   async getFileMeta(key: string): Promise<StorageObject | null> {
     try {
-      const cmd = new GetObjectCommand({
+      const absoluteKey = this.resolveKey(key)
+      const cmd = new HeadObjectCommand({
         Bucket: this.config.bucket,
-        Key: key,
+        Key: absoluteKey,
       })
 
       const resp = await this.client.send(cmd)
@@ -266,7 +304,7 @@ export class S3StorageProvider implements StorageProvider {
       }
 
       return {
-        key,
+        key: absoluteKey,
         size: resp.ContentLength || 0,
         lastModified: resp.LastModified,
         etag: resp.ETag,
