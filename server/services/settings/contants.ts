@@ -311,6 +311,23 @@ export const DEFAULT_SETTINGS = [
     label: 'settings.security.allowInsecureCookie.label',
     description: 'settings.security.allowInsecureCookie.description',
   },
+  // 备案号
+  {
+    namespace: 'record',
+    key: 'recordNumber',
+    type: 'string',
+    defaultValue: false,
+    label: 'settings.record.recordNumber.label',
+    description: 'settings.record.recordNumber.description',
+  },
+  {
+    namespace: 'record',
+    key: 'securityRecordNumber',
+    type: 'string',
+    defaultValue: false,
+    label: 'settings.record.securityRecordNumber.label',
+    description: 'settings.record.securityRecordNumber.description',
+  },
 ] as const satisfies SettingConfig[]
 
 export const settingNamespaces = [

@@ -289,6 +289,37 @@ const isRepoLinkHovering = ref(false)
         </div>
       </div>
     </div>
+    <div class="w-full px-2 pb-1 bg-neutral-200/50 dark:bg-neutral-900/50 items-center gap-2">
+      <div
+        class="text-xs text-neutral-500/60 dark:text-neutral-500/80 font-medium inline-flex justify-center items-center gap-0.5">
+        <a
+          ref="projectLink"
+          href="https://beian.miit.gov.cn/#/Integrated/index"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="hover:underline inline-flex items-center gap-0.5 group"
+        >
+          <p>
+            {{getSetting('record:recordNumber')}}
+          </p>
+        </a>
+      </div>
+      <br>
+      <div  class="text-xs text-neutral-500/60 dark:text-neutral-500/80 font-medium inline-flex justify-center items-center gap-0.5">
+        <a
+          ref="projectLink"
+          href="https://beian.mps.gov.cn/#/query/webSearch"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="hover:underline inline-flex items-center gap-0.5 group"
+        >
+          <p>
+            {{getSetting('record:securityRecordNumber')}}
+          </p>
+        </a>
+      </div>
+
+    </div>
   </div>
 </template>
 
