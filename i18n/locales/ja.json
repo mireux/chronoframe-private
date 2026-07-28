@@ -524,7 +524,8 @@
         "refreshLocation": "都市情報を再取得",
         "delete": "削除",
         "editMetadata": "メタデータを編集",
-        "previewPhoto": "プレビュー写真"
+        "previewPhoto": "プレビュー写真",
+        "downloadVideo": "動画をダウンロード"
       },
       "selection": {
         "selected": "{count} / {total}行選択済み",
