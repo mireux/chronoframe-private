@@ -3,6 +3,7 @@ import tailwindcss from '@tailwindcss/vite'
 import type { AnalyticsConfig } from './shared/types/config'
 
 const disableRemoteFonts = process.env.NUXT_DISABLE_REMOTE_FONTS === '1'
+const lowMemoryBuild = process.env.NITRO_LOW_MEMORY_BUILD === '1'
 
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
@@ -145,6 +146,7 @@ export default defineNuxtConfig({
 
   nitro: {
     preset: 'node_server',
+    minify: !lowMemoryBuild,
     experimental: {
       websocket: true,
       tasks: true,
