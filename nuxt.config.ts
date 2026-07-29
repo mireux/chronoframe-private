@@ -224,6 +224,14 @@ export default defineNuxtConfig({
     providers: {
       google: false,
       googleicons: false,
+      ...(disableRemoteFonts
+        ? {
+            adobe: false,
+            bunny: false,
+            fontshare: false,
+            fontsource: false,
+          }
+        : {}),
     },
   },
 
