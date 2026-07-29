@@ -1,0 +1,51 @@
+name: Build image artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Docker image tag to save in the artifact
+        required: true
+        default: mireux:be2970e
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Prepare deployment Dockerfile
+        run: |
+          cp Dockerfile Dockerfile.artifact
+          sed -i 's/NODE_OPTIONS="--max-old-space-size=4096" pnpm run build:deps/NUXT_DISABLE_REMOTE_FONTS=1 NITRO_LOW_MEMORY_BUILD=1 NODE_OPTIONS="--max-old-space-size=4096" pnpm run build:deps/' Dockerfile.artifact
+          sed -i 's/NODE_OPTIONS="--max-old-space-size=4096" pnpm run build/NUXT_DISABLE_REMOTE_FONTS=1 NITRO_LOW_MEMORY_BUILD=1 NODE_OPTIONS="--max-old-space-size=4096" pnpm run build/' Dockerfile.artifact
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.artifact
+          tags: ${{ inputs.image_tag }}
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Save image
+        run: |
+          docker save '${{ inputs.image_tag }}' | zstd -T0 -19 -o chronoframe-image.tar.zst
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chronoframe-image
+          path: chronoframe-image.tar.zst
+          retention-days: 3
