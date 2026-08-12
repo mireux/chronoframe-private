@@ -574,7 +574,8 @@
         "refreshLocation": "重新获取城市",
         "delete": "删除",
         "editMetadata": "编辑信息",
-        "previewPhoto": "预览照片"
+        "previewPhoto": "预览照片",
+        "downloadVideo": "下载视频"
       },
       "selection": {
         "selected": "{count} / {total} 行已选择",

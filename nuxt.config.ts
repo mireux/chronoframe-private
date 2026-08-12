@@ -2,6 +2,9 @@ import pkg from './package.json'
 import tailwindcss from '@tailwindcss/vite'
 import type { AnalyticsConfig } from './shared/types/config'
 
+const disableRemoteFonts = process.env.NUXT_DISABLE_REMOTE_FONTS === '1'
+const lowMemoryBuild = process.env.NITRO_LOW_MEMORY_BUILD === '1'
+
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
@@ -11,7 +14,7 @@ export default defineNuxtConfig({
     'reka-ui/nuxt',
     '@nuxt/ui',
     '@nuxt/eslint',
-    '@nuxt/fonts',
+    ...(disableRemoteFonts ? [] : ['@nuxt/fonts']),
     '@nuxt/icon',
     '@nuxt/image',
     '@nuxt/test-utils',
@@ -143,6 +146,7 @@ export default defineNuxtConfig({
 
   nitro: {
     preset: 'node_server',
+    minify: !lowMemoryBuild,
     experimental: {
       websocket: true,
       tasks: true,
@@ -220,6 +224,14 @@ export default defineNuxtConfig({
     providers: {
       google: false,
       googleicons: false,
+      ...(disableRemoteFonts
+        ? {
+            adobe: false,
+            bunny: false,
+            fontshare: false,
+            fontsource: false,
+          }
+        : {}),
     },
   },
 

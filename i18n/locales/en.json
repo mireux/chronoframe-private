@@ -574,7 +574,8 @@
         "refreshLocation": "Re-fetch City",
         "delete": "Delete",
         "editMetadata": "Edit Metadata",
-        "previewPhoto": "Photo Preview"
+        "previewPhoto": "Photo Preview",
+        "downloadVideo": "Download Video"
       },
       "selection": {
         "selected": "{count} / {total} rows selected",

@@ -1899,6 +1899,18 @@ const handleReprocessSingle = async (photo: Photo) => {
 const getRowActions = (photo: Photo) => {
   const isReverseLoading = !!reverseGeocodeLoading.value[photo.id]
 
+  const mediaActions = photo.isVideo
+    ? [
+        {
+          label: $t('dashboard.photos.actions.downloadVideo'),
+          icon: 'tabler:download',
+          onSelect() {
+            downloadVideo(photo)
+          },
+        },
+      ]
+    : []
+
   return [
     [
       {
@@ -1937,6 +1949,7 @@ const getRowActions = (photo: Photo) => {
           openImagePreview(photo)
         },
       },
+      ...mediaActions,
     ],
     [
       {
@@ -1947,6 +1960,10 @@ const getRowActions = (photo: Photo) => {
       },
     ],
   ]
+}
+
+const downloadVideo = (photo: Photo) => {
+  window.location.assign(`/api/photos/${encodeURIComponent(photo.id)}/download`)
 }
 
 // 添加到相册对话框
@@ -2245,9 +2262,9 @@ const handleBatchDownload = async () => {
     return
   }
 
-  // 检查所有选中照片是否都有 originalUrl
+  // 检查所有选中照片是否都有可下载的源文件
   const photosWithUrl = selectedPhotos.filter(
-    (photo: Photo) => photo.originalUrl,
+    (photo: Photo) => photo.originalUrl || (photo.isVideo && photo.storageKey),
   )
   if (photosWithUrl.length === 0) {
     toast.add({
@@ -2283,7 +2300,10 @@ const handleBatchDownload = async () => {
   try {
     for (const photo of photosWithUrl) {
       try {
-        const response = await fetch(photo.originalUrl!)
+        const downloadUrl = photo.isVideo
+          ? `/api/photos/${encodeURIComponent(photo.id)}/download`
+          : photo.originalUrl!
+        const response = await fetch(downloadUrl)
         if (!response.ok) {
           failureCount++
           continue
@@ -2293,8 +2313,9 @@ const handleBatchDownload = async () => {
         const url = window.URL.createObjectURL(blob)
         const link = document.createElement('a')
         link.href = url
-        const extension = photo.originalUrl!.split('.').pop() || 'jpg'
-        link.download = `${photo.title || `photo-${photo.id}`}.${extension}`
+        const extension = photo.storageKey?.split('.').pop() || 'jpg'
+        const title = photo.title || `photo-${photo.id}`
+        link.download = title.includes('.') ? title : `${title}.${extension}`
         document.body.appendChild(link)
         link.click()
         document.body.removeChild(link)

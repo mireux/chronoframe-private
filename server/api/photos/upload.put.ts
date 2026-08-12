@@ -6,7 +6,7 @@ import { safeUseTranslation } from '~~/server/utils/i18n'
 import { isStorageProviderError } from '~~/server/services/storage/errors'
 
 export default eventHandler(async (event) => {
-  await requireUserSession(event)
+  await requireAdminSession(event)
 
   const { storageProvider } = useStorageProvider(event)
   const key = getQuery(event).key as string | undefined
@@ -206,4 +206,3 @@ export default eventHandler(async (event) => {
 
   return { ok: true, key, needsEncryption: false }
 })
-
