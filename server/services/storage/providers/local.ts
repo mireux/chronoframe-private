@@ -2,8 +2,8 @@ import { createReadStream, createWriteStream, promises as fs, type Stats } from 
 import path from 'node:path'
 import type { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
+import type { LocalStorageConfig } from '~~/shared/types/storage'
 import type {
-  LocalStorageConfig,
   StorageByteRange,
   StorageObject,
   StorageProvider,

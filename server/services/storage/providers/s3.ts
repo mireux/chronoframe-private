@@ -17,6 +17,10 @@ import type {
   UploadOptions,
 } from '../interfaces'
 
+const isAsyncByteIterable = (
+  value: object,
+): value is AsyncIterable<Uint8Array> => Symbol.asyncIterator in value
+
 const sanitizeKey = (key: string) =>
   key.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/^\/+/, '')
 
@@ -228,10 +232,12 @@ export class S3StorageProvider implements StorageProvider {
 
       if (!resp.Body) return null
 
-      const stream =
-        resp.Body instanceof Readable
-          ? resp.Body
-          : Readable.from(resp.Body as AsyncIterable<Uint8Array>)
+      const stream = resp.Body instanceof Readable
+        ? resp.Body
+        : typeof resp.Body === 'object' && isAsyncByteIterable(resp.Body)
+          ? Readable.from(resp.Body)
+          : null
+      if (!stream) return null
       const contentLength = resp.ContentLength ??
         (range ? range.end - range.start + 1 : 0)
       const totalSizeMatch = /\/(\d+)$/.exec(resp.ContentRange ?? '')

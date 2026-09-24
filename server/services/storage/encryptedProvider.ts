@@ -250,6 +250,10 @@ export class EncryptedStorageProvider implements StorageProvider {
       }
     }
 
+    if (!fileBuffer) {
+      throw new Error(`File not found: ${key}`)
+    }
+
     if (isEncryptedPayload(fileBuffer)) {
       logger.chrono.info(`[encryptFile] File already encrypted, skipping: ${key}`)
       return

@@ -7,12 +7,33 @@ import type {
   StorageProvider,
   StorageReadResult,
 } from '../interfaces'
-import { StorageProviderError } from '../errors'
+export class StorageProviderError extends Error {
+  provider: string
+  statusCode: number
+  body?: string
+
+  constructor(params: {
+    provider: string
+    statusCode: number
+    message: string
+    body?: string
+  }) {
+    super(params.message)
+    this.name = 'StorageProviderError'
+    this.provider = params.provider
+    this.statusCode = params.statusCode
+    this.body = params.body
+  }
+}
 
 const toRecord = (value: unknown): Record<string, unknown> | null =>
   typeof value === 'object' && value !== null
     ? (value as Record<string, unknown>)
     : null
+
+const isAsyncByteIterable = (
+  value: object,
+): value is AsyncIterable<Uint8Array> => Symbol.asyncIterator in value
 
 /**
  * OpenListStorageProvider implements StorageProvider for OpenList API.
@@ -38,9 +59,10 @@ export class OpenListStorageProvider implements StorageProvider {
 
   private async ensureAuthToken(): Promise<string> {
     if (this.token) return this.token
-    if (this.config.token) {
-      this.token = this.config.token
-      return this.token
+    const configuredToken = this.config.token
+    if (configuredToken) {
+      this.token = configuredToken
+      return configuredToken
     }
 
     throw new Error('OpenList auth requires a token. Please configure NUXT_PROVIDER_OPENLIST_TOKEN.')
@@ -189,7 +211,7 @@ export class OpenListStorageProvider implements StorageProvider {
   async createFromStream(
     key: string,
     stream: Readable,
-    contentLength: number | null,
+    _contentLength: number | null,
     contentType?: string,
   ): Promise<StorageObject> {
     const rootedKey = this.withRoot(key)
@@ -200,18 +222,19 @@ export class OpenListStorageProvider implements StorageProvider {
     headers.set('Authorization', await this.ensureAuthToken())
     headers.set('Content-Type', contentType || 'application/octet-stream')
     headers.set('File-Path', encodeURIComponent(absoluteKey))
-    if (contentLength !== null) {
-      headers.set('Content-Length', String(contentLength))
-    }
 
-    const init: RequestInit & { duplex?: 'half' } = {
+    const chunks: Buffer[] = []
+    for await (const chunk of stream) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+    }
+    const payload = Buffer.concat(chunks)
+    headers.set('Content-Length', String(payload.length))
+
+    const resp = await fetch(`${this.baseUrl}${uploadPath}`, {
       method: 'PUT',
       headers,
-      body: Readable.toWeb(stream),
-      duplex: 'half',
-    }
-
-    const resp = await fetch(`${this.baseUrl}${uploadPath}`, init)
+      body: new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength),
+    })
 
     if (!resp.ok) {
       const text = await resp.text().catch(() => '')
@@ -306,8 +329,13 @@ export class OpenListStorageProvider implements StorageProvider {
       ? Number.parseInt(totalSizeMatch[1], 10)
       : contentLength
 
+    if (!isAsyncByteIterable(response.body)) {
+      await response.body.cancel()
+      return null
+    }
+
     return {
-      stream: Readable.from(response.body as AsyncIterable<Uint8Array>),
+      stream: Readable.from(response.body),
       size,
       contentLength,
     }

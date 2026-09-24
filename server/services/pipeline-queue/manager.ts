@@ -751,9 +751,10 @@ export class QueueManager {
                 .where(eq(tables.photos.storageKey, photoKey))
                 .limit(1)
 
-              if (photos.length > 0) {
+              const matched = photos[0]
+              if (matched) {
                 this.logger.info(`LivePhoto 视频 ${videoKey} 匹配照片 ${photoKey}`)
-                return photos[0]
+                return matched
               }
             }
 
