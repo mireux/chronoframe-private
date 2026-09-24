@@ -1,4 +1,4 @@
-<script lang="ts" setup>
+﻿<script lang="ts" setup>
 import type { FormSubmitEvent, TableColumn } from '@nuxt/ui'
 import type { Photo, PipelineQueueItem } from '~~/server/utils/db'
 import { h, resolveComponent } from 'vue'
@@ -9,12 +9,38 @@ import {
   getUploadContentTypeForPanorama,
   getPanoramaFormatFromStorageKey,
   isPanoramaByXmp,
+  isPanoramaPhoto,
 } from '~/libs/panorama/format'
 import { createPanoramaThumbnail } from '~/libs/panorama/thumbnail'
 import { buildUploadAccept, UPLOAD_ACCEPT_WHEN_WHITELIST_DISABLED } from '~/libs/upload-accept'
+import { getUploadQueueRank, getUploadTaskType } from '~/libs/upload-task-classifier'
 
 const UCheckbox = resolveComponent('UCheckbox')
 const Rating = resolveComponent('Rating')
+const getPanoramaDecodeErrorMessage = usePanoramaDecodeErrorMessage()
+
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  return typeof value === 'object' && value !== null
+}
+
+const getErrorMessage = (error: unknown, fallback: string): string => {
+  if (error instanceof Error && error.message) return error.message
+  if (typeof error === 'string' && error) return error
+  return fallback
+}
+
+const getDuplicateUploadTitle = (error: unknown): string | null => {
+  if (!isRecord(error) || error.statusCode !== 409 || !isRecord(error.data)) {
+    return null
+  }
+  if (error.data.duplicate !== true) return null
+  return typeof error.data.title === 'string' ? error.data.title : ''
+}
+
+const getResponseStatus = (error: unknown): number | undefined => {
+  if (!isRecord(error) || !isRecord(error.response)) return undefined
+  return typeof error.response.status === 'number' ? error.response.status : undefined
+}
 
 // 列名显示映射
 const columnNameMap: Record<string, string> = {
@@ -42,6 +68,10 @@ useHead({
   title: $t('title.photos'),
 })
 
+const UPLOAD_CONCURRENT_LIMIT = 3 // 同时上传的文件数量，避免批量上传占满浏览器和服务端资源
+const UPLOAD_PROGRESS_RENDER_INTERVAL_MS = 200 // 上传进度刷新到界面的最小间隔，降低大量文件时的重渲染频率
+const UPLOAD_REFRESH_DEBOUNCE_MS = 800 // 处理完成后合并刷新照片列表的等待时间，避免批量完成时连续刷新
+
 const maxFileSizeMbSetting = useSettingRef('storage:upload.maxSizeMb')
 const uploadMimeWhitelistEnabled = useSettingRef('upload:mime.whitelistEnabled')
 const uploadMimeWhitelist = useSettingRef('upload:mime.whitelist')
@@ -66,8 +96,25 @@ const uploadAccept = computed(() => {
 const route = useRoute()
 const dayjs = useDayjs()
 
-const { status, refresh } = usePhotos()
-const { filteredPhotos, selectedCounts, hasActiveFilters, photoToAlbumsMap, albums } = usePhotoFilters()
+const {
+  status,
+  refresh,
+  ensureLoaded,
+  loadMore,
+  hasMore,
+  totalCount,
+  loadedCount,
+} = usePhotos()
+await ensureLoaded()
+const {
+  filteredPhotos,
+  selectedCounts,
+  hasActiveFilters,
+  photoToAlbumsMap,
+  albums,
+  refreshAlbums,
+} = usePhotoFilters()
+await refreshAlbums()
 
 const totalSelectedFilters = computed(() => {
   return Object.values(selectedCounts.value).reduce(
@@ -142,7 +189,66 @@ interface UploadingFile {
   abortUpload?: () => void
 }
 
+interface QueueTaskStatus {
+  status: PipelineQueueItem['status']
+  statusStage: PipelineQueueItem['statusStage']
+  errorMessage?: string | null
+  result?: {
+    photoId?: string
+  }
+}
+
 const uploadingFiles = ref<Map<string, UploadingFile>>(new Map())
+let uploadQueueUpdateTimer: ReturnType<typeof setTimeout> | null = null
+let lastUploadQueueUpdateAt = 0
+let photosRefreshTimer: ReturnType<typeof setTimeout> | null = null
+
+const flushUploadQueueUpdate = () => {
+  if (uploadQueueUpdateTimer) {
+    clearTimeout(uploadQueueUpdateTimer)
+    uploadQueueUpdateTimer = null
+  }
+  lastUploadQueueUpdateAt = Date.now()
+  uploadingFiles.value = new Map(uploadingFiles.value)
+}
+
+const scheduleUploadQueueUpdate = (force = false) => {
+  if (force) {
+    flushUploadQueueUpdate()
+    return
+  }
+
+  const now = Date.now()
+  const waitMs = UPLOAD_PROGRESS_RENDER_INTERVAL_MS - (now - lastUploadQueueUpdateAt)
+  if (waitMs <= 0) {
+    flushUploadQueueUpdate()
+    return
+  }
+
+  if (!uploadQueueUpdateTimer) {
+    uploadQueueUpdateTimer = setTimeout(() => {
+      uploadQueueUpdateTimer = null
+      lastUploadQueueUpdateAt = Date.now()
+      uploadingFiles.value = new Map(uploadingFiles.value)
+    }, waitMs)
+  }
+}
+
+const schedulePhotosRefresh = () => {
+  if (photosRefreshTimer) {
+    clearTimeout(photosRefreshTimer)
+  }
+
+  photosRefreshTimer = setTimeout(() => {
+    photosRefreshTimer = null
+    void refresh()
+  }, UPLOAD_REFRESH_DEBOUNCE_MS)
+}
+
+const notifyAlbumMembershipChanged = async () => {
+  if (!selectedAlbumId.value) return
+  await refreshAlbums()
+}
 
 interface EditFormState {
   title: string
@@ -278,7 +384,11 @@ const formattedCoordinates = computed(() => {
   }
 })
 
-const uploadImage = async (file: File, existingFileId?: string) => {
+const uploadImage = async (
+  file: File,
+  existingFileId?: string,
+  batchFiles: File[] = [file],
+) => {
   const fileName = file.name
   const fileId = existingFileId || `${Date.now()}-${fileName}`
 
@@ -295,6 +405,7 @@ const uploadImage = async (file: File, existingFileId?: string) => {
     panoramaFormat && file.type !== contentType
       ? new File([file], file.name, { type: contentType, lastModified: file.lastModified })
       : file
+  let panoramaThumbnail: Awaited<ReturnType<typeof createPanoramaThumbnail>> | null = null
 
   // 获取或创建 uploadingFile
   let uploadingFile = uploadingFiles.value.get(fileId)
@@ -313,7 +424,7 @@ const uploadImage = async (file: File, existingFileId?: string) => {
     uploadingFile.status = 'preparing'
     uploadingFile.canAbort = false
     uploadingFile.abortUpload = () => uploadManager.abortUpload()
-    uploadingFiles.value = new Map(uploadingFiles.value)
+    scheduleUploadQueueUpdate(true)
   }
 
   try {
@@ -335,14 +446,25 @@ const uploadImage = async (file: File, existingFileId?: string) => {
       uploadingFile.status = 'skipped'
       uploadingFile.progress = 100
       uploadingFile.canAbort = false
-      uploadingFiles.value = new Map(uploadingFiles.value)
+      scheduleUploadQueueUpdate(true)
       return
+      }
+
+    if (panoramaFormat) {
+      uploadingFile.status = 'processing'
+      uploadingFile.stage = 'thumbnail'
+      uploadingFile.canAbort = false
+      scheduleUploadQueueUpdate(true)
+      panoramaThumbnail = await createPanoramaThumbnail({
+        file: uploadFile,
+        format: panoramaFormat,
+      })
     }
 
     uploadingFile.status = 'uploading'
     uploadingFile.canAbort = true
     uploadingFile.progress = 0
-    uploadingFiles.value = new Map(uploadingFiles.value)
+    scheduleUploadQueueUpdate(true)
 
     // 第二步：使用 composable 上传文件到存储
     await uploadManager.uploadFile(uploadFile, signedUrlResponse.signedUrl, {
@@ -359,11 +481,11 @@ const uploadImage = async (file: File, existingFileId?: string) => {
             ? dayjs.duration(progress.timeRemaining, 'seconds').humanize()
             : '',
         }
-        uploadingFiles.value = new Map(uploadingFiles.value)
+        scheduleUploadQueueUpdate()
       },
       onStatusChange: (status: string) => {
         uploadingFile.canAbort = status === 'uploading'
-        uploadingFiles.value = new Map(uploadingFiles.value)
+        scheduleUploadQueueUpdate(true)
       },
       onSuccess: async (_xhr: XMLHttpRequest) => {
         // 第三步：上传完成，提交到队列任务
@@ -371,26 +493,24 @@ const uploadImage = async (file: File, existingFileId?: string) => {
         uploadingFile.progress = 100
         uploadingFile.canAbort = false
         uploadingFile.stage = null
-        uploadingFiles.value = new Map(uploadingFiles.value)
+        scheduleUploadQueueUpdate(true)
 
         try {
           if (panoramaFormat) {
             uploadingFile.stage = 'thumbnail'
-            uploadingFiles.value = new Map(uploadingFiles.value)
+            scheduleUploadQueueUpdate(true)
 
             const prepare = await $fetch('/api/photos/panorama/prepare', {
               method: 'POST',
               body: { storageKey: signedUrlResponse.fileKey },
             })
 
-            const { thumbnailBlob, thumbnailHash, width, height } =
-              await createPanoramaThumbnail({
-                file: uploadFile,
-                format: panoramaFormat,
-              })
+            if (!panoramaThumbnail) {
+              throw new Error('Panorama thumbnail is not ready')
+            }
 
             const thumbnailUpload = useUpload({ timeout: 2 * 60 * 1000 })
-            const thumbFile = new File([thumbnailBlob], `${prepare.photoId}.webp`, {
+            const thumbFile = new File([panoramaThumbnail.thumbnailBlob], `${prepare.photoId}.webp`, {
               type: 'image/webp',
             })
             const internalThumbUrl = `/api/photos/upload?key=${encodeURIComponent(prepare.thumbnailKey)}`
@@ -401,9 +521,9 @@ const uploadImage = async (file: File, existingFileId?: string) => {
               body: {
                 storageKey: signedUrlResponse.fileKey,
                 thumbnailKey: prepare.thumbnailKey,
-                thumbnailHash,
-                width,
-                height,
+                thumbnailHash: panoramaThumbnail.thumbnailHash,
+                width: panoramaThumbnail.width,
+                height: panoramaThumbnail.height,
                 fileSize: uploadFile.size,
                 lastModified: new Date(uploadFile.lastModified).toISOString(),
                 title: uploadFile.name,
@@ -413,7 +533,7 @@ const uploadImage = async (file: File, existingFileId?: string) => {
 
             uploadingFile.status = 'completed'
             uploadingFile.stage = null
-            uploadingFiles.value = new Map(uploadingFiles.value)
+            scheduleUploadQueueUpdate(true)
 
             if (finalize?.photoId) {
               currentBatchPhotoIds.value.push(finalize.photoId)
@@ -421,46 +541,12 @@ const uploadImage = async (file: File, existingFileId?: string) => {
               currentBatchPhotoIds.value.push(prepare.photoId)
             }
 
-            await refresh()
+            schedulePhotosRefresh()
+            await notifyAlbumMembershipChanged()
             return
           }
 
-          const isMovFile = file.type === 'video/quicktime' || file.name.toLowerCase().endsWith('.mov')
-
-          const otherVideoTypes = [
-            'video/mp4',
-            'video/x-msvideo',
-            'video/x-matroska',
-            'video/webm',
-            'video/x-flv',
-            'video/x-ms-wmv',
-            'video/3gpp',
-            'video/mpeg',
-          ]
-          const otherVideoExtensions = ['.mp4', '.avi', '.mkv', '.webm', '.flv', '.wmv', '.m4v', '.3gp', '.mpeg', '.mpg']
-
-          const fileNameLower = file.name.toLowerCase()
-          const isOtherVideoFile = otherVideoTypes.includes(file.type) ||
-            otherVideoExtensions.some(ext => fileNameLower.endsWith(ext))
-
-          const getBaseName = (name: string) => name.replace(/\.[^/.]+$/, '').toLowerCase()
-          const hasMatchingPhotoInSelection = isMovFile &&
-            selectedFiles.value.some((selected) => {
-              if (selected === file) return false
-              const selectedNameLower = selected.name.toLowerCase()
-              const selectedIsPhoto = ['.jpg', '.jpeg', '.heic', '.heif'].some(ext =>
-                selectedNameLower.endsWith(ext),
-              )
-              if (!selectedIsPhoto) return false
-              return getBaseName(selected.name) === getBaseName(file.name)
-            })
-
-          let taskType = 'photo'
-          if (isOtherVideoFile) {
-            taskType = 'video'
-          } else if (isMovFile) {
-            taskType = hasMatchingPhotoInSelection ? 'live-photo-video' : 'video'
-          }
+          const taskType = getUploadTaskType(file, batchFiles)
 
           const tasks = []
 
@@ -485,7 +571,7 @@ const uploadImage = async (file: File, existingFileId?: string) => {
             const processingTaskResult = resp.results[resp.results.length - 1] as { taskId: number }
             uploadingFile.taskId = processingTaskResult.taskId
             uploadingFile.status = 'processing'
-            uploadingFiles.value = new Map(uploadingFiles.value)
+            scheduleUploadQueueUpdate(true)
 
             startTaskStatusCheck(processingTaskResult.taskId, fileId)
           } else {
@@ -493,54 +579,61 @@ const uploadImage = async (file: File, existingFileId?: string) => {
             uploadingFile.error = $t(
               'dashboard.photos.messages.taskSubmitFailed',
             )
-            uploadingFiles.value = new Map(uploadingFiles.value)
+            scheduleUploadQueueUpdate(true)
           }
-        } catch (processError: any) {
+        } catch (processError) {
           uploadingFile.status = 'error'
-          uploadingFile.error = `${$t('dashboard.photos.messages.taskSubmitFailed')}: ${processError.message}`
+          uploadingFile.error = `${$t('dashboard.photos.messages.taskSubmitFailed')}: ${getErrorMessage(
+            processError,
+            $t('dashboard.photos.messages.error'),
+          )}`
           uploadingFile.canAbort = false
-          uploadingFiles.value = new Map(uploadingFiles.value)
+          scheduleUploadQueueUpdate(true)
         }
       },
       onError: (error: string) => {
         uploadingFile.status = 'error'
         uploadingFile.error = error
         uploadingFile.canAbort = false
-        uploadingFiles.value = new Map(uploadingFiles.value)
+        scheduleUploadQueueUpdate(true)
       },
     })
-  } catch (error: any) {
+  } catch (error) {
     uploadingFile.status = 'error'
     uploadingFile.canAbort = false
 
-    // 处理重复文件阻止模式的错误
-    if (error.statusCode === 409 && error.data?.duplicate) {
+    const panoramaDecodeErrorMessage = getPanoramaDecodeErrorMessage(error)
+    const duplicateUploadTitle = getDuplicateUploadTitle(error)
+    if (panoramaDecodeErrorMessage) {
+      uploadingFile.error = panoramaDecodeErrorMessage
+    } else if (duplicateUploadTitle !== null) {
       uploadingFile.status = 'blocked'
       uploadingFile.error =
-        error.data.title || $t('upload.duplicate.block.title')
+        duplicateUploadTitle || $t('upload.duplicate.block.title')
     } else {
       // 其他错误
       uploadingFile.error =
-        error.message || $t('dashboard.photos.messages.uploadFailed')
+        getErrorMessage(error, $t('dashboard.photos.messages.uploadFailed'))
     }
 
-    uploadingFiles.value = new Map(uploadingFiles.value)
+    scheduleUploadQueueUpdate(true)
 
     // 提供更详细的错误信息
-    if (error.response?.status === 401) {
+    const errorMessage = getErrorMessage(error, '')
+    if (getResponseStatus(error) === 401) {
       uploadingFile.error = $t('dashboard.photos.errors.uploadUnauthorized')
-    } else if (error.message?.includes('CORS')) {
+    } else if (errorMessage.includes('CORS')) {
       uploadingFile.error = $t('dashboard.photos.errors.uploadCorsError')
     } else if (
-      error.message?.includes('NetworkError') ||
-      error.name === 'TypeError'
+      errorMessage.includes('NetworkError') ||
+      (error instanceof Error && error.name === 'TypeError')
     ) {
       uploadingFile.error = $t('dashboard.photos.errors.uploadNetworkError')
-    } else if (error.message?.includes('上传到存储失败')) {
+    } else if (errorMessage.includes('上传到存储失败')) {
       uploadingFile.error = $t('dashboard.photos.messages.uploadFailed')
     }
 
-    uploadingFiles.value = new Map(uploadingFiles.value)
+    scheduleUploadQueueUpdate(true)
   }
 }
 
@@ -555,7 +648,7 @@ const isUploadingPhotos = ref(false)
 const albumOptions = computed(() => {
   if (!albums.value) return []
   return [
-    { label: '不添加到相册', value: null },
+    { label: '未添加到相册', value: null },
     ...albums.value.map((album) => ({
       label: `${album.title} (${album.photoIds.length} 张照片)`,
       value: album.id,
@@ -713,9 +806,11 @@ watch(
   { deep: true },
 )
 
-watch(isUploadSlideoverOpen, (open) => {
+watch(isUploadSlideoverOpen, async (open) => {
   if (!open) {
     clearSelectedFiles()
+  } else {
+    await refreshAlbums()
   }
 })
 
@@ -736,6 +831,7 @@ watch(isEditModalOpen, (open) => {
       tags: [],
       location: null,
       rating: null,
+      isPanorama360: false,
     }
     locationSelection.value = null
     locationTouched.value = false
@@ -845,7 +941,7 @@ const statusIntervals = ref<Map<number, NodeJS.Timeout>>(new Map())
 const startTaskStatusCheck = (taskId: number, fileId: string) => {
   const intervalId = setInterval(async () => {
     try {
-      const response = await $fetch(`/api/queue/stats/${taskId}`)
+      const response = await $fetch<QueueTaskStatus>(`/api/queue/stats/${taskId}`)
       const uploadingFile = uploadingFiles.value.get(fileId)
 
       if (!uploadingFile) {
@@ -857,20 +953,20 @@ const startTaskStatusCheck = (taskId: number, fileId: string) => {
       // 更新任务状态
       uploadingFile.stage =
         response.status === 'in-stages' ? response.statusStage : null
-      uploadingFiles.value = new Map(uploadingFiles.value)
+      scheduleUploadQueueUpdate()
 
       if (response.status === 'completed') {
         // 任务完成
         uploadingFile.status = 'completed'
         uploadingFile.stage = null
-        uploadingFiles.value = new Map(uploadingFiles.value)
+        scheduleUploadQueueUpdate(true)
 
         // 停止状态检查
         clearInterval(intervalId)
         statusIntervals.value.delete(taskId)
 
         // 记录完成的照片ID
-        const photoId = (response as any).result?.photoId
+        const photoId = response.result?.photoId
         if (photoId && !currentBatchPhotoIds.value.includes(photoId)) {
           currentBatchPhotoIds.value.push(photoId)
         }
@@ -878,7 +974,8 @@ const startTaskStatusCheck = (taskId: number, fileId: string) => {
         // 不再显示单独的成功提示，由上传组件统一处理
 
         // 刷新照片列表
-        await refresh()
+        schedulePhotosRefresh()
+        await notifyAlbumMembershipChanged()
 
         // 2秒后从界面移除成功的任务
         // setTimeout(() => {
@@ -890,7 +987,7 @@ const startTaskStatusCheck = (taskId: number, fileId: string) => {
         uploadingFile.status = 'error'
         uploadingFile.error = `${$t('dashboard.photos.messages.error')}: ${response.errorMessage || $t('dashboard.photos.table.cells.unknown')}`
         uploadingFile.stage = null
-        uploadingFiles.value = new Map(uploadingFiles.value)
+        scheduleUploadQueueUpdate(true)
 
         // 停止状态检查
         clearInterval(intervalId)
@@ -912,7 +1009,7 @@ const startTaskStatusCheck = (taskId: number, fileId: string) => {
         uploadingFile.error = $t(
           'dashboard.photos.messages.taskStatusCheckFailed',
         )
-        uploadingFiles.value = new Map(uploadingFiles.value)
+        scheduleUploadQueueUpdate(true)
       }
     }
   }, 1000) // 每秒检查一次
@@ -939,23 +1036,27 @@ const removeUploadingFile = (fileId: string) => {
 }
 
 // 批量清除已完成和错误的任务
+const isUploadQueueRemovableStatus = (status: UploadingFile['status']) =>
+  status === 'completed' ||
+  status === 'error' ||
+  status === 'skipped' ||
+  status === 'blocked'
+
 const clearCompletedTasks = () => {
   const toRemove: string[] = []
 
   for (const [fileId, uploadingFile] of uploadingFiles.value) {
-    if (
-      uploadingFile.status === 'completed' ||
-      uploadingFile.status === 'error'
-    ) {
-      toRemove.push(fileId)
+    if (!isUploadQueueRemovableStatus(uploadingFile.status)) {
+      continue
+    }
+    toRemove.push(fileId)
 
-      // 清理可能存在的定时器
-      if (uploadingFile.taskId) {
-        const intervalId = statusIntervals.value.get(uploadingFile.taskId)
-        if (intervalId) {
-          clearInterval(intervalId)
-          statusIntervals.value.delete(uploadingFile.taskId)
-        }
+    // 清理可能存在的定时器
+    if (uploadingFile.taskId) {
+      const intervalId = statusIntervals.value.get(uploadingFile.taskId)
+      if (intervalId) {
+        clearInterval(intervalId)
+        statusIntervals.value.delete(uploadingFile.taskId)
       }
     }
   }
@@ -984,38 +1085,7 @@ const clearCompletedUploads = () => {
 
 // 清除所有上传
 const clearAllUploads = () => {
-  const toRemove: string[] = []
-
-  for (const [fileId, uploadingFile] of uploadingFiles.value) {
-    toRemove.push(fileId)
-
-    // 如果是正在上传的任务，先中止
-    if (uploadingFile.status === 'uploading' && uploadingFile.abortUpload) {
-      uploadingFile.abortUpload()
-    }
-
-    // 清理状态检查定时器
-    if (uploadingFile.taskId) {
-      const intervalId = statusIntervals.value.get(uploadingFile.taskId)
-      if (intervalId) {
-        clearInterval(intervalId)
-        statusIntervals.value.delete(uploadingFile.taskId)
-      }
-    }
-  }
-
-  uploadingFiles.value.clear()
-  uploadingFiles.value = new Map(uploadingFiles.value)
-
-  if (toRemove.length > 0) {
-    toast.add({
-      title: $t('dashboard.photos.uploadQueue.allTasksCleared'),
-      description: $t('dashboard.photos.uploadQueue.tasksCleared', {
-        count: toRemove.length,
-      }),
-      color: 'info',
-    })
-  }
+  clearCompletedUploads()
 }
 
 const columns: TableColumn<Photo>[] = [
@@ -1053,7 +1123,7 @@ const columns: TableColumn<Photo>[] = [
 
       const isInHiddenAlbum = photoAlbums?.some(albumId => {
         const album = albums.value?.find(a => a.id === albumId)
-        return album?.isHidden === 1 || album?.isHidden === true
+        return album?.isHidden === true
       })
 
       return h('div', { class: 'relative inline-block size-16 min-w-[100px]' }, [
@@ -1149,6 +1219,7 @@ const columns: TableColumn<Photo>[] = [
     cell: ({ row }) => {
       const isLivePhoto = row.original.isLivePhoto
       const isVideo = row.original.isVideo
+      const isPanorama = isPanoramaPhoto(row.original)
 
       if (isVideo) {
         return h('div', { class: 'flex items-center gap-1' }, [
@@ -1162,6 +1233,22 @@ const columns: TableColumn<Photo>[] = [
               class: 'text-blue-600 dark:text-blue-400 text-xs font-medium',
             },
             '视频',
+          ),
+        ])
+      }
+
+      if (isPanorama) {
+        return h('div', { class: 'flex items-center gap-1' }, [
+          h(Icon, {
+            name: 'tabler:sphere',
+            class: 'size-4 text-emerald-600 dark:text-emerald-400',
+          }),
+          h(
+            'span',
+            {
+              class: 'text-emerald-600 dark:text-emerald-400 text-xs font-medium',
+            },
+            $t('dashboard.photos.table.cells.panoramaPhoto'),
           ),
         ])
       }
@@ -1192,8 +1279,14 @@ const columns: TableColumn<Photo>[] = [
       ])
     },
     sortingFn: (rowA, rowB) => {
-      const valueA = rowA.original.isLivePhoto ? 1 : 0
-      const valueB = rowB.original.isLivePhoto ? 1 : 0
+      const rank = (photo: Photo) => {
+        if (photo.isVideo) return 3
+        if (isPanoramaPhoto(photo)) return 2
+        if (photo.isLivePhoto) return 1
+        return 0
+      }
+      const valueA = rank(rowA.original)
+      const valueB = rank(rowB.original)
       return valueB - valueA
     },
   },
@@ -1452,6 +1545,7 @@ const handleUpload = async () => {
   }
 
   isUploadingPhotos.value = true
+  let handoffToQueue = false
 
   try {
     const errors: string[] = []
@@ -1512,6 +1606,7 @@ const handleUpload = async () => {
               photoIds: skippedPhotoIds,
             },
           })
+          await notifyAlbumMembershipChanged()
 
           toast.add({
             title: '添加成功',
@@ -1528,6 +1623,7 @@ const handleUpload = async () => {
         }
 
         selectedFiles.value = []
+        isUploadSlideoverOpen.value = false
         return
       }
 
@@ -1545,6 +1641,7 @@ const handleUpload = async () => {
         })
       }
       selectedFiles.value = []
+      isUploadSlideoverOpen.value = false
       return
     }
 
@@ -1560,22 +1657,17 @@ const handleUpload = async () => {
       uploadingFiles.value.set(fileId, uploadingFile)
     }
 
-    uploadingFiles.value = new Map(uploadingFiles.value)
+    scheduleUploadQueueUpdate(true)
 
-    const CONCURRENT_LIMIT = 3
-    const videoExtensions = ['.mov', '.mp4', '.avi', '.mkv', '.webm', '.flv', '.wmv', '.m4v', '.3gp', '.mpeg', '.mpg']
-    const isVideoFile = (target: File) =>
-      target.type.startsWith('video/') ||
-      videoExtensions.some(ext => target.name.toLowerCase().endsWith(ext))
-    const fileQueue = [...validFiles].sort((a, b) =>
-      Number(isVideoFile(a)) - Number(isVideoFile(b)),
+    const fileQueue = [...validFiles].sort(
+      (a, b) => getUploadQueueRank(a, validFiles) - getUploadQueueRank(b, validFiles),
     )
     const activeUploads = new Set<Promise<void>>()
 
     const startUpload = async (file: File): Promise<void> => {
       const fileId = fileIdMapping.get(file)!
       try {
-        await uploadImage(file, fileId)
+        await uploadImage(file, fileId, validFiles)
       } catch (error: any) {
         errors.push(`${file.name}: ${error.message || '上传失败'}`)
         console.error('上传错误:', error)
@@ -1584,7 +1676,7 @@ const handleUpload = async () => {
 
     const processQueue = async (): Promise<void> => {
       while (fileQueue.length > 0 || activeUploads.size > 0) {
-        while (activeUploads.size < CONCURRENT_LIMIT && fileQueue.length > 0) {
+        while (activeUploads.size < UPLOAD_CONCURRENT_LIMIT && fileQueue.length > 0) {
           const file = fileQueue.shift()!
           const uploadPromise = startUpload(file)
 
@@ -1603,41 +1695,53 @@ const handleUpload = async () => {
 
     currentBatchPhotoIds.value = [...skippedPhotoIds]
 
-    await processQueue()
-
-    if (errors.length > 0) {
-      console.error('批量上传错误详情:', errors)
-    }
-
-    // 如果选择了相册，显示提示信息
-    if (selectedAlbumId.value) {
-      const totalFiles = validFiles.length + skippedPhotoIds.length
-      toast.add({
-        title: '上传任务已提交',
-        description: `${totalFiles} 个文件已提交处理，完成后将自动添加到相册`,
-        color: 'success',
-      })
-    }
-
-    // 如果有跳过的文件且选择了相册，立即添加到相册
-    if (selectedAlbumId.value && skippedPhotoIds.length > 0) {
+    const runQueuedUploads = async () => {
       try {
-        await $fetch(`/api/albums/${selectedAlbumId.value}/photos`, {
-          method: 'POST',
-          body: {
-            photoIds: skippedPhotoIds,
-          },
-        })
-      } catch (error) {
-        console.error('添加已存在照片到相册失败:', error)
+        await processQueue()
+
+        if (errors.length > 0) {
+          console.error('批量上传错误详情:', errors)
+        }
+
+        // 如果选择了相册，显示提示信息
+        if (selectedAlbumId.value) {
+          const totalFiles = validFiles.length + skippedPhotoIds.length
+          toast.add({
+            title: '上传任务已提交',
+            description: `${totalFiles} 个文件已提交处理，完成后将自动添加到相册`,
+            color: 'success',
+          })
+        }
+
+        // 如果有跳过的文件且选择了相册，立即添加到相册
+        if (selectedAlbumId.value && skippedPhotoIds.length > 0) {
+          try {
+            await $fetch(`/api/albums/${selectedAlbumId.value}/photos`, {
+              method: 'POST',
+              body: {
+                photoIds: skippedPhotoIds,
+              },
+            })
+            await notifyAlbumMembershipChanged()
+          } catch (error) {
+            console.error('添加已存在照片到相册失败:', error)
+          }
+        }
+
+      } finally {
+        currentBatchPhotoIds.value = []
+        selectedFiles.value = []
+        isUploadingPhotos.value = false
       }
     }
 
-    currentBatchPhotoIds.value = []
-    selectedFiles.value = []
+    handoffToQueue = true
     isUploadSlideoverOpen.value = false
+    void runQueuedUploads()
   } finally {
-    isUploadingPhotos.value = false
+    if (!handoffToQueue) {
+      isUploadingPhotos.value = false
+    }
   }
 }
 
@@ -2002,6 +2106,7 @@ const handleAddToAlbums = async () => {
 
     isAddToAlbumsDialogOpen.value = false
     await refresh()
+    await refreshAlbums()
   } catch (error) {
     console.error('添加到相册失败:', error)
     toast.add({
@@ -2309,7 +2414,7 @@ const handleBatchDownload = async () => {
       }
     }
 
-    // 更新提示信息
+    // 鏇存柊鎻愮ず淇℃伅
     if (successCount === photosWithUrl.length) {
       toast.update(downloadToast.id, {
         title: $t('dashboard.photos.messages.batchDownloadSuccess'),
@@ -2364,6 +2469,12 @@ watch(() => route.path, async () => {
 
 // 清理定时器
 onUnmounted(() => {
+  if (uploadQueueUpdateTimer) {
+    clearTimeout(uploadQueueUpdateTimer)
+  }
+  if (photosRefreshTimer) {
+    clearTimeout(photosRefreshTimer)
+  }
   // 清理所有状态检查定时器
   statusIntervals.value.forEach((intervalId) => {
     clearInterval(intervalId)
@@ -2544,7 +2655,8 @@ onUnmounted(() => {
                     })
                   "
                   icon="tabler:cloud-upload"
-                  layout="grid"
+                  layout="list"
+                  position="outside"
                   size="xl"
                   :accept="uploadAccept"
                   multiple
@@ -2552,7 +2664,7 @@ onUnmounted(() => {
                   dropzone
                   :ui="{
                     root: 'w-full',
-                    base: 'group relative flex flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-neutral-200/80 bg-white/90 px-6 py-12 text-center shadow-sm transition-all duration-300 hover:border-primary-400/80 hover:bg-primary-500/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/60 dark:border-neutral-700/70 dark:bg-neutral-900/80',
+                    base: 'group relative flex min-h-[13rem] flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-neutral-200/80 bg-white/90 px-6 py-12 text-center shadow-sm transition-all duration-300 hover:border-primary-400/80 hover:bg-primary-500/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/60 dark:border-neutral-700/70 dark:bg-neutral-900/80',
                     wrapper: 'flex flex-col items-center gap-2',
                     label: 'text-base font-semibold text-neutral-800 dark:text-neutral-100',
                     description: 'text-sm text-neutral-500 dark:text-neutral-400',
@@ -2988,6 +3100,22 @@ onUnmounted(() => {
               </div>
             </div>
           </div>
+          <div
+            v-if="hasMore"
+            class="flex items-center justify-center gap-3 border-t border-neutral-200 px-4 py-3 text-sm text-neutral-500 dark:border-neutral-700 dark:text-neutral-400"
+          >
+            <span>{{ loadedCount }} / {{ totalCount }}</span>
+            <UButton
+              size="sm"
+              color="neutral"
+              variant="soft"
+              icon="tabler:chevron-down"
+              :loading="status === 'pending'"
+              @click="loadMore"
+            >
+              {{ $t('common.loadMore') }}
+            </UButton>
+          </div>
         </div>
 
         <UModal v-model:open="isEditModalOpen">
@@ -3357,3 +3485,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped></style>
+
+
+
+

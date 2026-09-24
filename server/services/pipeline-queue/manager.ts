@@ -1,6 +1,6 @@
 import type { ConsolaInstance } from 'consola'
 import path from 'path'
-import { asc, desc, eq, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, lte, sql } from 'drizzle-orm'
 import type {
   NewPipelineQueueItem,
   PipelineQueueItem,
@@ -18,11 +18,20 @@ import {
   extractLocationFromGPS,
   parseGPSCoordinates,
 } from '../location/geocoding'
-import { findLivePhotoVideoForImage, isLivePhotoVideo } from '../video/livephoto'
+import {
+  ensureLivePhotoPlaybackVideo,
+  findLivePhotoVideoForImage,
+  isLivePhotoVideo,
+} from '../video/livephoto'
 import { processMotionPhotoFromXmp } from '../video/motion-photo'
 import { processVideoMetadata } from '../video/processor'
 import { getStorageManager } from '~~/server/plugins/3.storage'
-import { isStorageEncryptionEnabled, toFileProxyUrl } from '~~/server/utils/publicFile'
+import { toFileProxyUrl } from '~~/server/utils/publicFile'
+
+// 首次重试等待时间，后续失败按指数退避。
+const INITIAL_RETRY_DELAY_MS = 1000
+// 单次重试最大等待时间，避免失败任务等待过久。
+const MAX_RETRY_DELAY_MS = 30000
 
 class NonRetryableError extends Error {
   constructor(message: string) {
@@ -144,7 +153,12 @@ export class QueueManager {
       const highestPriorityPendingTask = tx
         .select()
         .from(tables.pipelineQueue)
-        .where(eq(tables.pipelineQueue.status, 'pending'))
+        .where(
+          and(
+            eq(tables.pipelineQueue.status, 'pending'),
+            lte(tables.pipelineQueue.createdAt, new Date()),
+          ),
+        )
         // 优先处理高优先级和较早创建的任务
         .orderBy(
           desc(tables.pipelineQueue.priority),
@@ -227,8 +241,8 @@ export class QueueManager {
 
     const retryDelay = shouldRetry
       ? Math.min(
-          1000 * Math.pow(2, newAttempts - 1),
-          isWindowsFileAccessErrorCode(errorCode) ? 60000 : 30000,
+          INITIAL_RETRY_DELAY_MS * Math.pow(2, newAttempts - 1),
+          MAX_RETRY_DELAY_MS,
         )
       : 0
 
@@ -260,156 +274,6 @@ export class QueueManager {
 
   /** 任务处理器 */
   private processors = (() => {
-    const processVideoFromStorageKey = async (params: {
-      taskId: number
-      storageKey: string
-      albumId?: number
-    }): Promise<Photo> => {
-      const { taskId, storageKey, albumId } = params
-      const storageProvider = getStorageManager().getProvider()
-      const encryptionEnabled = await isStorageEncryptionEnabled()
-      const toUrl = (key?: string | null) => {
-        if (!key) return null
-        return encryptionEnabled
-          ? toFileProxyUrl(key)
-          : storageProvider.getPublicUrl(key)
-      }
-      const photoId = generateSafePhotoId(storageKey)
-
-      let storageObject = await storageProvider.getFileMeta(storageKey)
-      let retries = 5
-
-      while (!storageObject && retries > 0) {
-        this.logger.info(
-          `未在存储中找到视频文件，检查中（剩余重试次数：${retries}）：${storageKey}`,
-        )
-        const maybeBuffer = await storageProvider.get(storageKey)
-        if (maybeBuffer) {
-          storageObject = {
-            key: storageKey,
-            size: maybeBuffer.length,
-            lastModified: new Date(),
-          }
-          break
-        }
-
-        if (retries > 1) {
-          await new Promise(resolve => setTimeout(resolve, 500))
-          retries--
-          storageObject = await storageProvider.getFileMeta(storageKey)
-        } else {
-          break
-        }
-      }
-
-      if (!storageObject) {
-        this.logger.warn(`重试后未在存储中找到视频文件：${storageKey}`)
-        throw new NonRetryableError(`未找到视频文件：${storageKey}`)
-      }
-
-      this.logger.success(`Video file found: ${storageKey}, size: ${storageObject.size}`)
-
-      await this.updateTaskStage(taskId, 'video-metadata')
-      this.logger.info(`[${taskId}:in-stage] 视频元数据提取`)
-      const processedData = await processVideoMetadata(storageKey)
-      if (!processedData) {
-        throw new Error('视频元数据处理失败')
-      }
-
-      const { metadata, thumbnailBuffer } = processedData
-
-      await this.updateTaskStage(taskId, 'video-thumbnail')
-      this.logger.info(`[${taskId}:in-stage] 视频缩略图上传`)
-      const thumbnailObject = await storageProvider.create(
-        `thumbnails/${photoId}.webp`,
-        thumbnailBuffer,
-        'image/webp',
-      )
-
-      const result: Photo = {
-        id: photoId,
-        title: path.basename(storageKey, path.extname(storageKey)),
-        description: null,
-        dateTaken:
-          storageObject.lastModified?.toISOString() || new Date().toISOString(),
-        tags: null,
-        width: metadata.width,
-        height: metadata.height,
-        aspectRatio: metadata.width / metadata.height,
-        storageKey: storageKey,
-        thumbnailKey: thumbnailObject.key,
-        fileSize: storageObject.size || null,
-        lastModified:
-          storageObject.lastModified?.toISOString() || new Date().toISOString(),
-        originalUrl: toUrl(storageKey),
-        thumbnailUrl: toUrl(thumbnailObject.key),
-        thumbnailHash: null,
-        exif: null,
-        latitude: null,
-        longitude: null,
-        country: null,
-        city: null,
-        locationName: null,
-        isLivePhoto: 0,
-        livePhotoVideoUrl: null,
-        livePhotoVideoKey: null,
-        isPanorama360: 0,
-        isVideo: 1,
-        duration: metadata.duration,
-        videoCodec: metadata.videoCodec,
-        audioCodec: metadata.audioCodec || null,
-        bitrate: metadata.bitrate,
-        frameRate: metadata.frameRate,
-      }
-
-      const db = useDB()
-      await db.insert(tables.photos).values(result).onConflictDoUpdate({
-        target: tables.photos.id,
-        set: result,
-      })
-
-      if (albumId) {
-        try {
-          const album = await db
-            .select()
-            .from(tables.albums)
-            .where(eq(tables.albums.id, albumId))
-            .get()
-
-          if (album) {
-            const existingRelation = await db
-              .select()
-              .from(tables.albumPhotos)
-              .where(
-                sql`${tables.albumPhotos.albumId} = ${albumId} AND ${tables.albumPhotos.photoId} = ${photoId}`,
-              )
-              .get()
-
-            if (!existingRelation) {
-              await db
-                .insert(tables.albumPhotos)
-                .values({
-                  albumId,
-                  photoId: photoId,
-                })
-                .run()
-
-              this.logger.info(
-                `[${this.workerId}] 视频 ${photoId} 已添加到相册 ${albumId}`,
-              )
-            }
-          }
-        } catch (error) {
-          this.logger.error(
-            `[${this.workerId}] 处理视频 ${photoId} 时添加到相册 ${albumId} 失败：`,
-            error,
-          )
-        }
-      }
-
-      return result
-    }
-
     return {
       photo: async (task: PipelineQueueItem) => {
         const { id: taskId, payload } = task
@@ -420,10 +284,9 @@ export class QueueManager {
         }
         const { storageKey } = payload
         const storageProvider = getStorageManager().getProvider()
-        const encryptionEnabled = await isStorageEncryptionEnabled()
         const toUrl = (key?: string | null) => {
           if (!key) return null
-          return encryptionEnabled ? toFileProxyUrl(key) : storageProvider.getPublicUrl(key)
+          return toFileProxyUrl(key)
         }
         const photoId = generateSafePhotoId(storageKey)
 
@@ -538,7 +401,12 @@ export class QueueManager {
           if (mergedExif) {
             const { latitude, longitude } = parseGPSCoordinates(mergedExif)
             coordinates = { latitude, longitude }
-            if (latitude && longitude) {
+            if (
+              latitude !== undefined &&
+              latitude !== null &&
+              longitude !== undefined &&
+              longitude !== null
+            ) {
               locationInfo = await extractLocationFromGPS(latitude, longitude)
             }
           }
@@ -622,8 +490,8 @@ export class QueueManager {
               : null,
             exif: mergedExif,
             // 地理位置信息
-            latitude: coordinates?.latitude || null,
-            longitude: coordinates?.longitude || null,
+            latitude: coordinates?.latitude ?? null,
+            longitude: coordinates?.longitude ?? null,
             country: locationInfo?.country || null,
             city: locationInfo?.city || null,
             locationName: locationInfo?.locationName || null,
@@ -811,10 +679,9 @@ export class QueueManager {
       livePhotoDetect: async (task: PipelineQueueItem) => {
         const db = useDB()
         const storageProvider = getStorageManager().getProvider()
-        const encryptionEnabled = await isStorageEncryptionEnabled()
         const toUrl = (key?: string | null) => {
           if (!key) return null
-          return encryptionEnabled ? toFileProxyUrl(key) : storageProvider.getPublicUrl(key)
+          return toFileProxyUrl(key)
         }
 
         const { id: taskId, payload } = task
@@ -847,11 +714,19 @@ export class QueueManager {
           }
 
           const videoFileName = path.basename(videoKey)
-          if (!isLivePhotoVideo(videoFileName, storageObject.size)) {
+          if (!isLivePhotoVideo(videoFileName, storageObject.size ?? 0)) {
             this.logger.info(
               `MOV ${videoKey} 不符合 LivePhoto 条件，按普通视频处理`,
             )
-            await processVideoFromStorageKey({ taskId, storageKey: videoKey, albumId })
+            const videoTask: PipelineQueueItem = {
+              ...task,
+              payload: {
+                type: 'video',
+                storageKey: videoKey,
+                albumId,
+              },
+            }
+            await this.processors.video(videoTask)
             return
           }
 
@@ -908,18 +783,32 @@ export class QueueManager {
           }
 
           if (!matchedPhoto) {
-            this.logger.info(`LivePhoto 视频 ${videoKey} 没有匹配的照片，按普通视频处理`)
-            await processVideoFromStorageKey({ taskId, storageKey: videoKey, albumId })
+            this.logger.info(
+              `LivePhoto 视频 ${videoKey} 没有匹配的照片，按普通视频处理`,
+            )
+            const videoTask: PipelineQueueItem = {
+              ...task,
+              payload: {
+                type: 'video',
+                storageKey: videoKey,
+                albumId: payload.albumId,
+              },
+            }
+            await this.processors.video(videoTask)
             return
           }
 
-          const livePhotoVideoUrl = toUrl(videoKey)
+          const playbackVideo = await ensureLivePhotoPlaybackVideo(videoKey)
+          if (!playbackVideo) {
+            throw new Error(`LivePhoto 视频 ${videoKey} 转码失败`)
+          }
+          const livePhotoVideoUrl = toUrl(playbackVideo.videoKey)
           await db
             .update(tables.photos)
             .set({
               isLivePhoto: 1,
               livePhotoVideoUrl,
-              livePhotoVideoKey: videoKey,
+              livePhotoVideoKey: playbackVideo.videoKey,
             })
             .where(eq(tables.photos.id, matchedPhoto.id))
 
@@ -972,10 +861,9 @@ export class QueueManager {
         }
         const { storageKey } = payload
         const storageProvider = getStorageManager().getProvider()
-        const encryptionEnabled = await isStorageEncryptionEnabled()
         const toUrl = (key?: string | null) => {
           if (!key) return null
-          return encryptionEnabled ? toFileProxyUrl(key) : storageProvider.getPublicUrl(key)
+          return toFileProxyUrl(key)
         }
         const photoId = generateSafePhotoId(storageKey)
 

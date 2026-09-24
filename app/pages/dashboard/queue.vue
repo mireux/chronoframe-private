@@ -4,6 +4,11 @@ import type { TableColumn } from '@nuxt/ui'
 
 const UButton = resolveComponent('UButton')
 
+// 队列每页显示数量，与服务端默认值保持一致。
+const QUEUE_PAGE_SIZE = 50
+// 仅轮询当前页，十秒刷新一次任务状态。
+const QUEUE_REFRESH_INTERVAL_MS = 10_000
+
 definePageMeta({
   layout: 'dashboard',
 })
@@ -19,6 +24,7 @@ const isLoading = ref(false)
 const selectedTasks = ref<number[]>([])
 const statusFilter = ref<string>('all')
 const typeFilter = ref<string>('all')
+const page = ref(1)
 
 // 数据获取
 const { data: queueData, refresh: refreshQueue } = await useFetch(
@@ -27,24 +33,37 @@ const { data: queueData, refresh: refreshQueue } = await useFetch(
     query: computed(() => ({
       ...(statusFilter.value !== 'all' && { status: statusFilter.value }),
       ...(typeFilter.value !== 'all' && { type: typeFilter.value }),
+      page: page.value,
+      pageSize: QUEUE_PAGE_SIZE,
     })),
   },
 )
 
 // 队列统计数据
 const queueStats = computed(() => {
-  if (!queueData.value?.data)
-    return { pending: 0, processing: 0, completed: 0, failed: 0 }
-
-  const stats = { pending: 0, processing: 0, completed: 0, failed: 0 }
-  queueData.value.data.forEach((task) => {
-    if (task.status === 'pending') stats.pending++
-    else if (task.status === 'in-stages') stats.processing++
-    else if (task.status === 'completed') stats.completed++
-    else if (task.status === 'failed') stats.failed++
-  })
-  return stats
+  return (
+    queueData.value?.stats ?? {
+      pending: 0,
+      processing: 0,
+      completed: 0,
+      failed: 0,
+    }
+  )
 })
+
+watch([statusFilter, typeFilter], () => {
+  page.value = 1
+  selectedTasks.value = []
+})
+
+watch(
+  () => queueData.value?.pagination.totalPages,
+  (totalPages) => {
+    if (totalPages !== undefined && page.value > Math.max(totalPages, 1)) {
+      page.value = Math.max(totalPages, 1)
+    }
+  },
+)
 
 // 刷新数据
 const refreshData = async () => {
@@ -140,10 +159,10 @@ const retryAllFailedTasks = async () => {
   }
 }
 
-// 删除单个任务（仅适用于失败任务）
+// 删除单个非执行中任务
 const deleteTask = async (taskId: number) => {
   try {
-    await $fetch(`/api/queue/failed/${taskId}`, {
+    await $fetch(`/api/queue/task/${taskId}`, {
       method: 'DELETE',
     })
 
@@ -194,6 +213,7 @@ const statusOptions = [
 const typeOptions = [
   { label: $t('dashboard.queue.filters.all'), value: 'all' },
   { label: $t('dashboard.queue.types.photo'), value: 'photo' },
+  { label: $t('dashboard.queue.types.video'), value: 'video' },
   {
     label: $t('dashboard.queue.types.live-photo-video'),
     value: 'live-photo-video',
@@ -201,6 +221,10 @@ const typeOptions = [
   {
     label: $t('dashboard.queue.types.photo-reverse-geocoding'),
     value: 'photo-reverse-geocoding',
+  },
+  {
+    label: $t('dashboard.queue.types.file-encryption'),
+    value: 'file-encryption',
   },
 ]
 
@@ -264,10 +288,13 @@ const columns: TableColumn<any>[] = [
   },
 ]
 
-// 自动刷新
-const refreshInterval = setInterval(refreshData, 10000) // 每10秒刷新一次
+// 自动刷新只在浏览器挂载后启动，避免服务端渲染残留定时器。
+let refreshInterval: ReturnType<typeof setInterval> | null = null
+onMounted(() => {
+  refreshInterval = setInterval(refreshData, QUEUE_REFRESH_INTERVAL_MS)
+})
 onBeforeUnmount(() => {
-  clearInterval(refreshInterval)
+  if (refreshInterval) clearInterval(refreshInterval)
 })
 </script>
 
@@ -444,7 +471,7 @@ onBeforeUnmount(() => {
                     {{ $t('dashboard.queue.buttons.retry') }}
                   </UButton>
                   <UButton
-                    v-if="row.original.status !== 'in-stage'"
+                    v-if="row.original.status !== 'in-stages'"
                     icon="tabler:trash"
                     size="xs"
                     variant="soft"
@@ -454,10 +481,7 @@ onBeforeUnmount(() => {
                     {{ $t('dashboard.queue.buttons.delete') }}
                   </UButton>
                   <span
-                    v-if="
-                      row.original.status === 'pending' ||
-                      row.original.status === 'in-stages'
-                    "
+                    v-if="row.original.status === 'in-stages'"
                     class="text-xs text-gray-400"
                   >
                     -
@@ -532,6 +556,17 @@ onBeforeUnmount(() => {
                 </div>
               </template>
             </UTable>
+
+            <div
+              v-if="(queueData?.pagination.totalPages ?? 0) > 1"
+              class="flex justify-center border-t border-neutral-200 pt-4 dark:border-neutral-800"
+            >
+              <UPagination
+                v-model:page="page"
+                :total="queueData?.pagination.total ?? 0"
+                :items-per-page="QUEUE_PAGE_SIZE"
+              />
+            </div>
           </div>
         </UCard>
       </div>
