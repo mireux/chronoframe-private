@@ -1,4 +1,4 @@
-import type { Readable } from 'node:stream'
+import { Readable } from 'node:stream'
 import type { _Object, S3ClientConfig } from '@aws-sdk/client-s3'
 import {
   DeleteObjectCommand,
@@ -11,10 +11,15 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import type {
   StorageObject,
+  StorageByteRange,
   StorageProvider,
-  StorageReadStream,
+  StorageReadResult,
   UploadOptions,
 } from '../interfaces'
+
+const isAsyncByteIterable = (
+  value: object,
+): value is AsyncIterable<Uint8Array> => Symbol.asyncIterator in value
 
 const sanitizeKey = (key: string) =>
   key.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/^\/+/, '')
@@ -69,13 +74,6 @@ const getHttpStatusCode = (error: unknown): number | undefined => {
   }
   const httpStatusCode: unknown = Reflect.get(metadata, 'httpStatusCode')
   return typeof httpStatusCode === 'number' ? httpStatusCode : undefined
-}
-
-const isNodeReadableStream = (value: unknown): value is NodeJS.ReadableStream => {
-  if (typeof value !== 'object' || value === null) return false
-  if (!('pipe' in value)) return false
-  const pipe = (value as { pipe?: unknown }).pipe
-  return typeof pipe === 'function'
 }
 
 const createClient = (config: S3StorageConfig): S3Client => {
@@ -218,23 +216,39 @@ export class S3StorageProvider implements StorageProvider {
     }
   }
 
-  async getStream(key: string): Promise<StorageReadStream | null> {
-    const absoluteKey = this.resolveKey(key)
-    const cmd = new GetObjectCommand({
-      Bucket: this.config.bucket,
-      Key: absoluteKey,
-    })
-
+  async getStream(
+    key: string,
+    range?: StorageByteRange,
+  ): Promise<StorageReadResult | null> {
     try {
-      const resp = await this.client.send(cmd)
+      const absoluteKey = this.resolveKey(key)
+      const resp = await this.client.send(
+        new GetObjectCommand({
+          Bucket: this.config.bucket,
+          Key: absoluteKey,
+          Range: range ? `bytes=${range.start}-${range.end}` : undefined,
+        }),
+      )
+
       if (!resp.Body) return null
-      if (!isNodeReadableStream(resp.Body)) return null
-      return {
-        stream: resp.Body,
-        size: resp.ContentLength ?? undefined,
-      }
-    } catch {
-      return null
+
+      const stream = resp.Body instanceof Readable
+        ? resp.Body
+        : typeof resp.Body === 'object' && isAsyncByteIterable(resp.Body)
+          ? Readable.from(resp.Body)
+          : null
+      if (!stream) return null
+      const contentLength = resp.ContentLength ??
+        (range ? range.end - range.start + 1 : 0)
+      const totalSizeMatch = /\/(\d+)$/.exec(resp.ContentRange ?? '')
+      const size = totalSizeMatch?.[1]
+        ? Number.parseInt(totalSizeMatch[1], 10)
+        : contentLength
+
+      return { stream, size, contentLength }
+    } catch (error) {
+      if (getHttpStatusCode(error) === 404) return null
+      throw error
     }
   }
 

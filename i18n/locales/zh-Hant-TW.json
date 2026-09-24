@@ -423,6 +423,7 @@
     }
   },
   "common": {
+    "loadMore": "載入更多",
     "months": {
       "jan": "一月",
       "feb": "二月",
@@ -512,6 +513,7 @@
           "noGps": "沒有 GPS 資訊",
           "unknown": "未知",
           "staticPhoto": "靜態照片",
+          "panoramaPhoto": "全景照片",
           "noReactions": "無反應"
         },
         "columnVisibility": {
@@ -617,6 +619,8 @@
         "uploadNetworkError": "網路連線失敗或 CORS 錯誤。請檢查網路和儲存配置。",
         "uploadCorsError": "CORS 請求失敗。請檢查儲存 CORS 組態。",
         "uploadUnauthorized": "未授權。請重新登入。",
+        "unsupportedExrCompression": "此 EXR 使用了暫不支援的壓縮格式（{compression}）。請轉換為 ZIP、ZIPS、PIZ、DWAA、DWAB 或未壓縮 EXR 後重試。",
+        "panoramaDecodeFailed": "上傳前無法解碼此 EXR（{compression}）。請轉換為 ZIP、ZIPS、PIZ、DWAA、DWAB 或未壓縮 EXR 後重試。",
         "taskSubmitFailed": "提交處理任務失敗",
         "taskStatusCheckFailed": "檢查任務狀態失敗。請重新整理頁面後重試。"
       },
@@ -833,16 +837,22 @@
       },
       "types": {
         "photo": "照片處理",
+        "video": "影片處理",
         "live-photo-video": "LivePhoto影片",
-        "photo-reverse-geocoding": "照片逆地理編碼"
+        "photo-reverse-geocoding": "照片逆地理編碼",
+        "file-encryption": "檔案加密"
       },
       "stages": {
         "preprocessing": "預處理",
         "metadata": "中繼資料",
         "thumbnail": "縮圖",
         "exif": "EXIF處理",
+        "motion-photo": "動態照片處理",
         "reverse-geocoding": "地理解析",
-        "live-photo": "LivePhoto處理"
+        "live-photo": "LivePhoto處理",
+        "video-metadata": "影片中繼資料",
+        "video-thumbnail": "影片縮圖",
+        "encrypting": "檔案加密"
       },
       "buttons": {
         "retry": "重試",

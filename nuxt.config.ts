@@ -1,6 +1,14 @@
 import pkg from './package.json'
 import tailwindcss from '@tailwindcss/vite'
 import type { AnalyticsConfig } from './shared/types/config'
+import { installDevFetchErrorHint } from './shared/utils/dev-fetch-error-hint'
+
+const IS_PRODUCTION = process.env.NODE_ENV === 'production'
+const ENABLE_DEV_FETCH_ABORT_HINT = !IS_PRODUCTION
+
+if (ENABLE_DEV_FETCH_ABORT_HINT) {
+  installDevFetchErrorHint()
+}
 
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
@@ -14,7 +22,6 @@ export default defineNuxtConfig({
     '@nuxt/fonts',
     '@nuxt/icon',
     '@nuxt/image',
-    '@nuxt/test-utils',
     '@pinia/nuxt',
     'motion-v/nuxt',
     'nuxt-auth-utils',
@@ -82,7 +89,7 @@ export default defineNuxtConfig({
         key: '',
       },
     },
-    STORAGE_PROVIDER: 's3' satisfies 's3' | 'local' | 'openlist',
+    STORAGE_PROVIDER: 'local' satisfies 's3' | 'local' | 'openlist',
     provider: {
       s3: {
         endpoint: '',
@@ -143,9 +150,36 @@ export default defineNuxtConfig({
 
   nitro: {
     preset: 'node_server',
+    externals: {
+      // 内联存在多主版本的依赖树，确保各调用方保留与自身兼容的实现。
+      inline: [
+        '@aws-crypto/',
+        '@aws-sdk/client-s3',
+        '@aws-sdk/s3-request-presigner',
+        // 开发态由 Nitro 外部化 Smithy CJS，避免 Rollup 转换 Node 内置模块失败。
+        ...(IS_PRODUCTION
+          ? [
+              '@smithy/is-array-buffer',
+              '@smithy/util-buffer-from',
+              '@smithy/util-utf8',
+            ]
+          : []),
+        '@vue/devtools-api',
+        'devalue',
+        'jose',
+        'nuxt-auth-utils',
+        'openid-client',
+        'perfect-debounce',
+        'pinia',
+        'vue-i18n',
+        'vue-router',
+      ],
+    },
     experimental: {
       websocket: true,
       tasks: true,
+      // 生产构建使用旧解析器控制内存，开发态保留默认解析以兼容 Windows 路径。
+      legacyExternals: IS_PRODUCTION,
     },
   },
 

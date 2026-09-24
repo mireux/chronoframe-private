@@ -2,11 +2,12 @@ import { createReadStream, createWriteStream, promises as fs, type Stats } from 
 import path from 'node:path'
 import type { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
+import type { LocalStorageConfig } from '~~/shared/types/storage'
 import type {
-  LocalStorageConfig,
+  StorageByteRange,
   StorageObject,
   StorageProvider,
-  StorageReadStream,
+  StorageReadResult,
 } from '../interfaces'
 
 const ensureDir = async (dirPath: string) => {
@@ -168,15 +169,34 @@ export class LocalStorageProvider implements StorageProvider {
     }
   }
 
-  async getStream(key: string): Promise<StorageReadStream | null> {
+  async getStream(
+    key: string,
+    range?: StorageByteRange,
+  ): Promise<StorageReadResult | null> {
     const { absFile } = this.resolveAbsoluteKey(key)
+
     try {
       const stat = await retryFsOp(() => fs.stat(absFile), 10, 200, 2000)
       if (!stat.isFile()) return null
-      return { stream: createReadStream(absFile), size: stat.size }
-    } catch (err) {
-      if (getErrnoCode(err) === 'ENOENT') return null
-      throw err
+
+      if (stat.size === 0) {
+        return {
+          stream: createReadStream(absFile),
+          size: 0,
+          contentLength: 0,
+        }
+      }
+
+      const start = range?.start ?? 0
+      const end = range?.end ?? stat.size - 1
+      return {
+        stream: createReadStream(absFile, { start, end }),
+        size: stat.size,
+        contentLength: end - start + 1,
+      }
+    } catch (error) {
+      if (getErrnoCode(error) === 'ENOENT') return null
+      throw error
     }
   }
 

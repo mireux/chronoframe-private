@@ -1,9 +1,12 @@
 import { z } from 'zod'
 import { settingsManager } from '~~/server/services/settings/settingsManager'
 import { getSettingUIConfig } from '~~/server/services/settings/ui-config'
+import { requireSetupSession } from '~~/server/utils/setup-token'
 import type { FieldDescriptor } from '~~/shared/types/settings'
 
 export default eventHandler(async (event) => {
+  await requireSetupSession(event)
+
   const query = await getValidatedQuery(
     event,
     z.object({
@@ -13,6 +16,8 @@ export default eventHandler(async (event) => {
 
   // 1. Admin Account Schema
   if (query.namespace === 'admin') {
+    // 管理员邮箱可通过环境变量预设，避免安装向导重复输入。
+    const adminEmail = process.env.CFRAME_ADMIN_EMAIL?.trim() ?? ''
     const fields: FieldDescriptor[] = [
       {
         namespace: 'admin',
@@ -27,8 +32,8 @@ export default eventHandler(async (event) => {
         namespace: 'admin',
         key: 'email',
         type: 'string',
-        defaultValue: '',
-        value: '',
+        defaultValue: adminEmail,
+        value: adminEmail,
         label: 'wizard.admin.email.label',
         ui: { type: 'input', required: true, placeholder: 'admin@example.com' }
       },
@@ -50,7 +55,7 @@ export default eventHandler(async (event) => {
         label: 'wizard.admin.confirmPassword.label',
         ui: { type: 'password', required: true }
       }
-    ] as any[]
+    ]
 
     return { namespace: 'admin', fields }
   }
@@ -112,6 +117,30 @@ export default eventHandler(async (event) => {
 
     const fields = namespaceSettings.map((setting) => {
       const uiConfig = getSettingUIConfig(query.namespace, setting.key)
+
+      if (query.namespace === 'app' && setting.key === 'appearance.theme') {
+        return {
+          ...setting,
+          ui: {
+            type: 'select',
+            options: uiConfig?.options ?? [
+              {
+                label: 'settings.app.appearance.theme.light',
+                value: 'light',
+              },
+              {
+                label: 'settings.app.appearance.theme.dark',
+                value: 'dark',
+              },
+              {
+                label: 'settings.app.appearance.theme.system',
+                value: 'system',
+              },
+            ],
+            help: uiConfig?.help,
+          },
+        }
+      }
       
       // Patch for Wizard Map Provider to use rich selector
       if (query.namespace === 'map' && setting.key === 'provider') {

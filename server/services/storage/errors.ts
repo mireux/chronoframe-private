@@ -1,21 +1,6 @@
-export class StorageProviderError extends Error {
-  provider: string
-  statusCode: number
-  body?: string
+import { StorageProviderError } from './providers/openlist'
 
-  constructor(params: {
-    provider: string
-    statusCode: number
-    message: string
-    body?: string
-  }) {
-    super(params.message)
-    this.name = 'StorageProviderError'
-    this.provider = params.provider
-    this.statusCode = params.statusCode
-    this.body = params.body
-  }
-}
+export { StorageProviderError }
 
 export const isStorageProviderError = (
   error: unknown,

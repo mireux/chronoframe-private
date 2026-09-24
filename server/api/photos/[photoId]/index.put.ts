@@ -4,11 +4,12 @@ import path from 'node:path'
 import { z } from 'zod'
 import { exiftool } from 'exiftool-vendored'
 import { eq } from 'drizzle-orm'
+import { isError } from 'h3'
 
 import { extractExifData } from '~~/server/services/image/exif'
 import { tables, useDB } from '~~/server/utils/db'
 import { useStorageProvider } from '~~/server/utils/useStorageProvider'
-import { isStorageEncryptionEnabled, resolveOriginalKeyForPhoto, toFileProxyUrl } from '~~/server/utils/publicFile'
+import { resolveOriginalKeyForPhoto, toFileProxyUrl } from '~~/server/utils/publicFile'
 import { safeUseTranslation } from '~~/server/utils/i18n'
 import type { NeededExif } from '~~/shared/types/photo'
 
@@ -92,10 +93,9 @@ export default eventHandler(async (event) => {
   }
 
   const { storageProvider } = useStorageProvider(event)
-  const encryptionEnabled = await isStorageEncryptionEnabled()
   const toUrl = (key?: string | null) => {
     if (!key) return null
-    return encryptionEnabled ? toFileProxyUrl(key) : storageProvider.getPublicUrl(key)
+    return toFileProxyUrl(key)
   }
 
   const withUrls = (row: typeof tables.photos.$inferSelect) => {
@@ -482,6 +482,10 @@ export default eventHandler(async (event) => {
       photo: updatedPhoto ? withUrls(updatedPhoto) : null,
     }
   } catch (error) {
+    if (isError(error)) {
+      throw error
+    }
+
     logger.image.error('Failed to update photo metadata', error)
     throw createError({
       statusCode: 500,

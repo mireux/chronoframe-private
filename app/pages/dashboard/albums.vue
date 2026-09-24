@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import type { Album, Photo } from '~~/server/utils/db'
+import type { AlbumListItem } from '~/composables/useAlbums'
 import type { FormSubmitEvent, FormError } from '@nuxt/ui'
 
 definePageMeta({
@@ -12,8 +13,13 @@ useHead({
 
 interface AlbumItem extends Album {
   photoCount?: number
-  photoIds?: string[]
+  photoIds: string[]
+  previewPhotos: Photo[]
   coverPhoto?: Photo | null
+}
+
+interface AlbumDetail extends Album {
+  photos: Photo[]
 }
 
 interface AlbumFormState {
@@ -23,9 +29,15 @@ interface AlbumFormState {
 }
 
 const route = useRoute()
+const {
+  photos: catalogPhotos,
+  ensureLoaded: ensurePhotosLoaded,
+  loadMore: loadMoreCatalogPhotos,
+  hasMore: hasMorePhotos,
+} = usePhotos()
 
 const albums = ref<AlbumItem[]>([])
-const isLoadingAlbums = ref(false)
+const isLoadingAlbums = ref(true)
 const allPhotos = ref<Photo[]>([])
 const isLoadingPhotos = ref(false)
 
@@ -49,8 +61,9 @@ const isSubmittingForm = ref(false)
 const selectedPhotoIds = ref<string[]>([])
 const coverPhotoId = ref('')
 const photoSelectorSearchQuery = ref('')
+const photoSelectorMode = ref<'photos' | 'cover'>('photos')
 
-const validateForm = (state: any): FormError[] => {
+const validateForm = (state: AlbumFormState): FormError[] => {
   const errors: FormError[] = []
   if (!state.title?.trim()) {
     errors.push({
@@ -64,21 +77,17 @@ const validateForm = (state: any): FormError[] => {
 const loadAlbums = async () => {
   isLoadingAlbums.value = true
   try {
-    const response = await $fetch('/api/albums')
-    albums.value = (response as any[]).map((album) => ({
+    const response = await $fetch<AlbumListItem[]>('/api/albums')
+    albums.value = response.map((album) => ({
       ...album,
       photoCount: album.photoIds?.length || 0,
     }))
 
     for (const album of albums.value) {
-      if (album.coverPhotoId && allPhotos.value.length > 0) {
-        const coverPhoto = allPhotos.value.find(
-          (p) => p.id === album.coverPhotoId,
-        )
-        if (coverPhoto) {
-          album.coverPhoto = coverPhoto
-        }
-      }
+      album.coverPhoto =
+        album.previewPhotos.find((photo) => photo.id === album.coverPhotoId) ??
+        album.previewPhotos[0] ??
+        null
     }
   } catch (error) {
     console.error('Failed to load albums:', error)
@@ -94,8 +103,8 @@ const loadAlbums = async () => {
 const loadPhotos = async () => {
   isLoadingPhotos.value = true
   try {
-    const { photos } = usePhotos()
-    allPhotos.value = photos.value
+    await ensurePhotosLoaded()
+    allPhotos.value = catalogPhotos.value
   } catch (error) {
     console.error('Failed to load photos:', error)
   } finally {
@@ -103,7 +112,18 @@ const loadPhotos = async () => {
   }
 }
 
-const openCreateSlideover = () => {
+const loadMorePhotos = async () => {
+  isLoadingPhotos.value = true
+  try {
+    await loadMoreCatalogPhotos()
+    allPhotos.value = catalogPhotos.value
+  } finally {
+    isLoadingPhotos.value = false
+  }
+}
+
+const openCreateSlideover = async () => {
+  await loadPhotos()
   currentAlbum.value = null
   formData.title = ''
   formData.description = ''
@@ -117,7 +137,15 @@ const openCreateSlideover = () => {
 const openEditSlideover = async (album: AlbumItem) => {
   currentAlbum.value = album
   try {
-    const albumDetail = (await $fetch(`/api/albums/${album.id}`)) as any
+    const [albumDetail] = await Promise.all([
+      $fetch<AlbumDetail>(`/api/albums/${album.id}`),
+      loadPhotos(),
+    ])
+    const photosById = new Map(
+      allPhotos.value.map((photo) => [photo.id, photo]),
+    )
+    for (const photo of albumDetail.photos) photosById.set(photo.id, photo)
+    allPhotos.value = Array.from(photosById.values())
     formData.title = album.title
     formData.description = album.description || ''
     formData.isHidden = album.isHidden || false
@@ -156,9 +184,9 @@ const onFormSubmit = async (event: FormSubmitEvent<AlbumFormState>) => {
         method: 'PUT',
         body: {
           title: event.data.title,
-          description: event.data.description || undefined,
+          description: event.data.description || null,
           isHidden: event.data.isHidden,
-          coverPhotoId: coverPhotoId.value || undefined,
+          coverPhotoId: coverPhotoId.value || null,
           photoIds: selectedPhotoIds.value,
         },
       })
@@ -174,9 +202,9 @@ const onFormSubmit = async (event: FormSubmitEvent<AlbumFormState>) => {
         method: 'POST',
         body: {
           title: event.data.title,
-          description: event.data.description || undefined,
+          description: event.data.description || null,
           isHidden: event.data.isHidden,
-          coverPhotoId: coverPhotoId.value || undefined,
+          coverPhotoId: coverPhotoId.value || null,
           photoIds: selectedPhotoIds.value,
         },
       })
@@ -189,6 +217,7 @@ const onFormSubmit = async (event: FormSubmitEvent<AlbumFormState>) => {
       isAlbumSlideoverOpen.value = false
     }
 
+    await refreshAlbumsData()
     await loadAlbums()
   } catch (error) {
     console.error('Failed to save album:', error)
@@ -217,6 +246,7 @@ const deleteAlbum = async () => {
     })
 
     isDeleteConfirmOpen.value = false
+    await refreshAlbumsData()
     await loadAlbums()
   } catch (error) {
     console.error('Failed to delete album:', error)
@@ -239,6 +269,11 @@ const togglePhotoSelection = (photoId: string) => {
   }
 }
 
+const clearSelectedPhotos = () => {
+  selectedPhotoIds.value = []
+  coverPhotoId.value = ''
+}
+
 const setCoverPhoto = (photoId: string) => {
   if (!selectedPhotoIds.value.includes(photoId)) {
     selectedPhotoIds.value.push(photoId)
@@ -246,7 +281,41 @@ const setCoverPhoto = (photoId: string) => {
   coverPhotoId.value = photoId
 }
 
+const handlePhotoSelectorItemClick = (photoId: string) => {
+  if (photoSelectorMode.value === 'cover') {
+    setCoverPhoto(photoId)
+    isPhotoSelectorOpen.value = false
+    return
+  }
+
+  togglePhotoSelection(photoId)
+}
+
+const openPhotoSelector = () => {
+  photoSelectorMode.value = 'photos'
+  isPhotoSelectorOpen.value = true
+}
+
+const openCoverSelector = () => {
+  photoSelectorMode.value = 'cover'
+  isPhotoSelectorOpen.value = true
+}
+
+const coverSelectablePhotos = computed(() => {
+  return allPhotos.value.filter((photo) =>
+    selectedPhotoIds.value.includes(photo.id),
+  )
+})
+
+const photoSelectorSourcePhotos = computed(() => {
+  return photoSelectorMode.value === 'cover'
+    ? coverSelectablePhotos.value
+    : allPhotos.value
+})
+
 const areAllPhotosSelected = computed(() => {
+  if (photoSelectorMode.value === 'cover') return false
+
   return (
     allPhotos.value.length > 0 &&
     selectedPhotoIds.value.length === allPhotos.value.length
@@ -254,6 +323,8 @@ const areAllPhotosSelected = computed(() => {
 })
 
 const areSomePhotosSelected = computed(() => {
+  if (photoSelectorMode.value === 'cover') return false
+
   return (
     selectedPhotoIds.value.length > 0 &&
     selectedPhotoIds.value.length < allPhotos.value.length
@@ -262,7 +333,7 @@ const areSomePhotosSelected = computed(() => {
 
 const toggleAllPhotos = () => {
   if (areAllPhotosSelected.value) {
-    selectedPhotoIds.value = []
+    clearSelectedPhotos()
   } else {
     selectedPhotoIds.value = allPhotos.value.map((p) => p.id)
   }
@@ -270,22 +341,25 @@ const toggleAllPhotos = () => {
 
 const filteredPhotos = computed(() => {
   const query = photoSelectorSearchQuery.value.toLowerCase()
-  if (!query) return allPhotos.value
+  const sourcePhotos = photoSelectorSourcePhotos.value
+  if (!query) return sourcePhotos
 
-  return allPhotos.value.filter(
+  return sourcePhotos.filter(
     (photo) =>
       (photo.title?.toLowerCase() || '').includes(query) ||
       (photo.description?.toLowerCase() || '').includes(query),
   )
 })
 
+const activePhotoSelectorPhotos = filteredPhotos
+
 onMounted(async () => {
-  await Promise.all([loadPhotos(), loadAlbums()])
+  await loadAlbums()
 })
 
 watch(() => route.path, async () => {
   if (route.path === '/dashboard/albums') {
-    await Promise.all([loadPhotos(), loadAlbums()])
+    await loadAlbums()
   }
 })
 
@@ -541,7 +615,7 @@ const columns: any[] = [
             <button
               v-else
               class="w-full h-48 bg-gray-100 dark:bg-neutral-800 flex flex-col items-center justify-center text-gray-500 hover:text-gray-600 dark:hover:text-gray-400 hover:bg-gray-200 dark:hover:bg-neutral-700 transition-colors cursor-pointer"
-              @click="isPhotoSelectorOpen = true"
+              @click="openCoverSelector"
             >
               <Icon
                 name="tabler:photo"
@@ -605,7 +679,7 @@ const columns: any[] = [
                   icon="tabler:photo-plus"
                   size="lg"
                   class="w-full"
-                  @click="isPhotoSelectorOpen = true"
+                  @click="openPhotoSelector"
                 >
                   {{
                     selectedPhotoIds.length > 0
@@ -632,7 +706,7 @@ const columns: any[] = [
                       color="neutral"
                       size="xs"
                       icon="tabler:trash"
-                      @click="selectedPhotoIds = []"
+                      @click="clearSelectedPhotos"
                     >
                       {{ $t('dashboard.albums.form.clearAll') }}
                     </UButton>
@@ -715,7 +789,7 @@ const columns: any[] = [
                     >
                       {{
                         $t('dashboard.albums.modal.totalPhotos', {
-                          count: allPhotos.length,
+                        count: photoSelectorSourcePhotos.length,
                         })
                       }}
                       ·
@@ -747,6 +821,7 @@ const columns: any[] = [
                     class="flex-1 text-sm"
                   />
                   <div
+                    v-if="photoSelectorMode === 'photos'"
                     class="hidden sm:flex items-center gap-2 px-3 py-2 bg-gray-100 dark:bg-neutral-800 rounded-lg whitespace-nowrap"
                   >
                     <UCheckbox
@@ -759,7 +834,11 @@ const columns: any[] = [
                     }}</span>
                   </div>
                   <UButton
-                    v-show="!areAllPhotosSelected && allPhotos.length > 0"
+                    v-show="
+                      photoSelectorMode === 'photos' &&
+                      !areAllPhotosSelected &&
+                      allPhotos.length > 0
+                    "
                     class="sm:hidden"
                     size="sm"
                     color="neutral"
@@ -776,8 +855,8 @@ const columns: any[] = [
                 >
                   {{
                     $t('dashboard.albums.modal.searchResults', {
-                      current: filteredPhotos.length,
-                      total: allPhotos.length,
+                      current: activePhotoSelectorPhotos.length,
+                      total: photoSelectorSourcePhotos.length,
                     })
                   }}
                 </div>
@@ -785,14 +864,14 @@ const columns: any[] = [
 
               <div class="flex-1 overflow-y-auto p-2 sm:p-3 md:p-6">
                 <div
-                  v-if="filteredPhotos.length > 0"
+                  v-if="activePhotoSelectorPhotos.length > 0"
                   class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 sm:gap-3"
                 >
                   <div
-                    v-for="photo in filteredPhotos"
+                    v-for="photo in activePhotoSelectorPhotos"
                     :key="photo.id"
                     class="relative group cursor-pointer"
-                    @click="togglePhotoSelection(photo.id)"
+                    @click="handlePhotoSelectorItemClick(photo.id)"
                   >
                     <div
                       class="relative aspect-square rounded-lg overflow-hidden bg-gray-200 dark:bg-neutral-700 border-2 sm:border-3 transition-all"
@@ -873,6 +952,21 @@ const columns: any[] = [
                 </div>
 
                 <div
+                  v-if="photoSelectorMode === 'photos' && hasMorePhotos"
+                  class="flex justify-center py-6"
+                >
+                  <UButton
+                    color="neutral"
+                    variant="soft"
+                    icon="tabler:chevron-down"
+                    :loading="isLoadingPhotos"
+                    @click="loadMorePhotos"
+                  >
+                    {{ $t('common.loadMore') }}
+                  </UButton>
+                </div>
+
+                <div
                   v-else
                   class="flex flex-col items-center justify-center h-64 text-gray-500"
                 >
@@ -916,7 +1010,7 @@ const columns: any[] = [
                         {{ selectedPhotoIds.length }}
                       </span>
                       <span class="text-gray-600 dark:text-gray-400"
-                        >/ {{ allPhotos.length }}</span
+                        >/ {{ photoSelectorSourcePhotos.length }}</span
                       >
                     </div>
                     <div

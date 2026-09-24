@@ -121,14 +121,14 @@
       },
       "encryption": {
         "enabled": {
-          "description": "ä¸Šä¼ å’Œç”Ÿæˆçš„ç¼©ç•¥å›¾å°†ä»¥åŠ å¯†å½¢å¼ä¿ \nå­˜åœ¨å­˜å‚¨æ–¹æ¡ \nˆä¸­",
-          "help": "å¼€å¯åŽå­˜å‚¨ä¸­å­˜çš„æ˜¯åŠ å¯†æ•°æ®ï¼Œå‰ç«¯è®¿é—®æ—¶ç”±ç³»ç»Ÿè‡ªåŠ¨è§£å¯†å‘ˆçŽ°",
-          "label": "å¯ç”¨å­˜å‚¨åŠ å¯†"
+          "description": "上傳和生成的縮略圖將以加密形式保存在儲存方案中",
+          "help": "開啟後儲存中保存的是加密數據，前端存取時由系統自動解密呈現",
+          "label": "啟用儲存加密"
         },
         "key": {
-          "description": "ç”¨äºŽåŠ å¯†/è§£å¯†å­˜å‚¨æ•°æ®çš„å¯†é’¥",
-          "help": "å»ºè®®ä½¿ \nç”¨éšæœº 32 å­—èŠ‚å¯†é’¥ï¼ˆhex/base64ï¼‰ï¼Œä¸?è¦?ä¸¢å¤±ï¼Œå¦åˆ™æ— æ³•è§£å¯†å·²å­˜æ–‡ä»¶",
-          "label": "åŠ å¯†å¯†é’¥"
+          "description": "用於加密/解密儲存數據的密鑰",
+          "help": "建議使用隨機 32 位元組密鑰（hex/base64），請勿遺失，否則無法解密已儲存檔案",
+          "label": "加密密鑰"
         }
       }
     },
@@ -423,6 +423,7 @@
     }
   },
   "common": {
+    "loadMore": "載入更多",
     "months": {
       "jan": "一月",
       "feb": "二月",
@@ -512,6 +513,7 @@
           "noGps": "沒有 GPS 資料",
           "unknown": "未知",
           "staticPhoto": "靜態相片",
+          "panoramaPhoto": "全景照片",
           "noReactions": "無反應"
         },
         "columnVisibility": {
@@ -617,6 +619,8 @@
         "uploadNetworkError": "網路連線失敗或 CORS 錯誤。請檢查網路和儲存配置。",
         "uploadCorsError": "CORS 請求失敗。請檢查儲存 CORS 組態。",
         "uploadUnauthorized": "未授權。請重新登入。",
+        "unsupportedExrCompression": "此 EXR 使用了暫不支援的壓縮格式（{compression}）。請轉換為 ZIP、ZIPS、PIZ、DWAA、DWAB 或未壓縮 EXR 後重試。",
+        "panoramaDecodeFailed": "上傳前無法解碼此 EXR（{compression}）。請轉換為 ZIP、ZIPS、PIZ、DWAA、DWAB 或未壓縮 EXR 後重試。",
         "taskSubmitFailed": "提交處理任務失敗",
         "taskStatusCheckFailed": "檢查任務狀態失敗。請重新整理頁面後重試。"
       },
@@ -833,16 +837,22 @@
       },
       "types": {
         "photo": "照片處理",
+        "video": "視頻處理",
         "live-photo-video": "LivePhoto視頻",
-        "photo-reverse-geocoding": "照片逆地理編碼"
+        "photo-reverse-geocoding": "照片逆地理編碼",
+        "file-encryption": "文件加密"
       },
       "stages": {
         "preprocessing": "預處理",
         "metadata": "元數據",
         "thumbnail": "縮略圖",
         "exif": "EXIF處理",
+        "motion-photo": "動態照片處理",
         "reverse-geocoding": "地理解析",
-        "live-photo": "LivePhoto處理"
+        "live-photo": "LivePhoto處理",
+        "video-metadata": "視頻元數據",
+        "video-thumbnail": "視頻縮略圖",
+        "encrypting": "文件加密"
       },
       "buttons": {
         "retry": "重試",
